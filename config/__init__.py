@@ -21,6 +21,15 @@ class Config(BaseModel):
     num_epochs: int = 100
     batch_size: int = 64
 
+    def get_activation(self) -> torch.nn.Module:
+        activations = {
+            'relu': torch.nn.ReLU(),
+            'gelu': torch.nn.GELU(),
+            'tanh': torch.nn.Tanh()
+        }
+        return activations[self.activation]
+
+
     def get_dtype_pt(self) -> torch.dtype:
         if self.dtype == "float32":
             return torch.float32

@@ -7,6 +7,30 @@ from aml_project.dataset import ImageOnlyDataset
 from config import Config
 
 
+class PositionalEncoding(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.pe : torch.Tensor
+        # self.pe = nn.UninitializedParameter() # old ver, maybe faster
+        self.current_shape = None
+
+    def initialize_encoding(self, d_model: int, max_len: int, device: torch.device, dtype: torch.dtype):
+        pe = torch.zeros(max_len, d_model, device=device, dtype=dtype)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-torch.log(torch.tensor(10000.0)) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.unsqueeze(0)  # Shape (1, max_len, d_model)
+        self.pe = nn.Parameter(pe, requires_grad=False)
+        self.current_shape = (1, max_len, d_model)
+        self.register_buffer(name="pe", tensor=pe, persistent=False) # maybe slow 
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.current_shape != (1, x.size(1), x.size(2)) or self.pe.device != x.device or self.pe.dtype != x.dtype:
+            self.initialize_encoding(d_model=x.size(-1), max_len=x.size(1), device=x.device, dtype=x.dtype)
+        x = x + self.pe[:, :x.size(1), :]
+        return x
+
 class ConvBlock(nn.Module):
     def __init__(
         self,
@@ -25,9 +49,11 @@ class ConvBlock(nn.Module):
             padding_mode="reflect",
         )
         self.scale = nn.Upsample(scale_factor=2) if scale == "up" else nn.MaxPool2d(2)
+        self.activation = config.get_activation()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.conv(x)
+        x = self.activation(x)
         return self.scale(x)
 
 
