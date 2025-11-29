@@ -5,7 +5,6 @@ import zipfile
 import os
 import torch
 from PIL import Image
-import cv2
 import numpy as np
 import transformers
 

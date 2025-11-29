@@ -12,6 +12,7 @@ dependencies = [
     "numpy>=2.3.5",
     "opencv-python>=4.11.0.86",
     "pillow>=12.0.0",
+    "pydantic>=2.12.5",
     "torch>=2.9.1",
     "transformers>=4.57.3",
 ]
