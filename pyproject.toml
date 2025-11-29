@@ -1,0 +1,24 @@
+[project]
+name = "aml-project"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Lorenzo Colombini", email = "lorenzinco23@gmail.com" },
+    { name = "Anrea Puddu", email = "puddu@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "numpy>=2.3.5",
+    "opencv-python>=4.11.0.86",
+    "pillow>=12.0.0",
+    "torch>=2.9.1",
+    "transformers>=4.57.3",
+]
+
+[project.scripts]
+aml-project = "aml_project:main"
+
+[build-system]
+requires = ["uv_build>=0.9.12,<0.10.0"]
+build-backend = "uv_build"
