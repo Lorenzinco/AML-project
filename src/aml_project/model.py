@@ -2,34 +2,64 @@ from typing import Literal
 
 import torch
 from torch import nn
+import math 
 
 from aml_project.dataset import ImageOnlyDataset
 from config import Config
 
 
-class PositionalEncoding(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.pe : torch.Tensor
-        # self.pe = nn.UninitializedParameter() # old ver, maybe faster
-        self.current_shape = None
+class PositionalEncoding2D(nn.Module):
 
-    def initialize_encoding(self, d_model: int, max_len: int, device: torch.device, dtype: torch.dtype):
-        pe = torch.zeros(max_len, d_model, device=device, dtype=dtype)
-        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-torch.log(torch.tensor(10000.0)) / d_model))
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-        pe = pe.unsqueeze(0)  # Shape (1, max_len, d_model)
-        self.pe = nn.Parameter(pe, requires_grad=False)
-        self.current_shape = (1, max_len, d_model)
-        self.register_buffer(name="pe", tensor=pe, persistent=False) # maybe slow 
+    def __init__(self, d_model: int, height: int, width: int):
+        super().__init__()
+
+        self.d_model = d_model
+        self.height = height
+        self.width = width
+
+        pe = torch.zeros(d_model, height, width)  # (C, H, W)
+
+        d_model_half = d_model // 2
+        div_term = torch.exp(
+            torch.arange(0, d_model_half, 2).float()
+            * (-math.log(10000.0) / d_model_half)
+        )  # (d_model_half/2,)
+
+        # Positional encoding for Y (rows)
+        pos_y = torch.arange(0, height, dtype=torch.float).unsqueeze(1)  # (H, 1)
+        pe_y = torch.zeros(height, d_model_half)  # (H, d_model_half)
+        pe_y[:, 0::2] = torch.sin(pos_y * div_term)
+        pe_y[:, 1::2] = torch.cos(pos_y * div_term)
+
+        # Positional encoding for X (cols)
+        pos_x = torch.arange(0, width, dtype=torch.float).unsqueeze(1)  # (W, 1)
+        pe_x = torch.zeros(width, d_model_half)  # (W, d_model_half)
+        pe_x[:, 0::2] = torch.sin(pos_x * div_term)
+        pe_x[:, 1::2] = torch.cos(pos_x * div_term)
+
+        # Combine Y and X to (H, W, d_model)
+        pe_y = pe_y.unsqueeze(1).repeat(1, width, 1)      # (H, W, d_model_half)
+        pe_x = pe_x.unsqueeze(0).repeat(height, 1, 1)     # (H, W, d_model_half)
+        pe_2d = torch.cat([pe_y, pe_x], dim=-1)           # (H, W, d_model)
+
+        # Rearrange to (1, H*W, d_model) for easy addition to sequences
+        pe_2d = pe_2d.view(height * width, d_model).unsqueeze(0)  # (1, H*W, d_model)
+
+        self.register_buffer("pe", pe_2d, persistent=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if self.current_shape != (1, x.size(1), x.size(2)) or self.pe.device != x.device or self.pe.dtype != x.dtype:
-            self.initialize_encoding(d_model=x.size(-1), max_len=x.size(1), device=x.device, dtype=x.dtype)
-        x = x + self.pe[:, :x.size(1), :]
-        return x
+        """
+        x: (B, H*W, d_model) where H and W match the height/width in __init__.
+        """
+        B, L, D = x.shape
+        if D != self.d_model:
+            raise ValueError(f"d_model mismatch: got {D}, expected {self.d_model}")
+        if L != self.height * self.width:
+            raise ValueError(
+                f"Sequence length {L} != H*W ({self.height}*{self.width} = {self.height * self.width})"
+            )
+
+        return x + self.pe  # (1, L, D) will broadcast over batch
 
 class ConvBlock(nn.Module):
     def __init__(
@@ -75,6 +105,13 @@ class Photosciop(nn.Module):
                     scale="down",
                 )
             )
+            
+        H, W = config.resolution
+        self.pos_encoding = PositionalEncoding2D(
+            d_model=config.bottleneck,
+            height=H // (2 ** config.conv_blocks),
+            width=W // (2 ** config.conv_blocks),
+        )
 
         self.encoder = nn.TransformerEncoder(
             nn.TransformerEncoderLayer(
@@ -117,6 +154,7 @@ class Photosciop(nn.Module):
         output_list.append(x)
         b, c, h, w = x.shape
         x = x.view(b, c, h * w).permute(0, 2, 1)
+        x = self.pos_encoding(x)
         x = self.encoder(x)
         x = x.permute(0, 2, 1).view(b, c, h, w)
 
