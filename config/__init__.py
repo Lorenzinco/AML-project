@@ -20,6 +20,7 @@ class Config(BaseModel):
     lr: float = 10e-3
     num_epochs: int = 100
     batch_size: int = 64
+    num_ellipses_train: tuple[int, int] = (1, 5)
 
     def get_activation(self) -> torch.nn.Module:
         activations = {

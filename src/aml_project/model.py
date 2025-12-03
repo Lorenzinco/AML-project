@@ -7,6 +7,52 @@ import math
 from aml_project.dataset import ImageOnlyDataset
 from config import Config
 
+import matplotlib
+matplotlib.use("Qt5Agg")
+from matplotlib import pyplot as plt
+
+
+def sample_ellipses_mask(resolution:tuple[int, int], count_range: tuple[int, int], device="cpu"):
+    """
+    Returns a binary mask of specified resolution with OR of 'count' random ellipses.
+    """
+    h, w = resolution
+    count = torch.randint(count_range[0], count_range[1] + 1, (),)
+    # Create coordinate grid
+    ys = torch.linspace(-1, 1, h, device=device)
+    xs = torch.linspace(-1, 1, w, device=device)
+    yy, xx = torch.meshgrid(ys, xs, indexing="ij")  # (h, w)
+
+    # Random ellipse parameters
+    # centers in [-1..1], axes in [0.05, 0.2], angle in [0..π]
+    cx = torch.empty(count, device=device).uniform_(-1, 1)
+    cy = torch.empty(count, device=device).uniform_(-1, 1)
+    ax = torch.empty(count, device=device).uniform_(0.05, 0.2)
+    ay = torch.empty(count, device=device).uniform_(0.05, 0.2)
+    angle = torch.empty(count, device=device).uniform_(0, torch.pi)
+
+    # Expand grid to (count, h, w)
+    xx = xx.unsqueeze(0)  # (1, h, w)
+    yy = yy.unsqueeze(0)
+
+    # Shift grid by ellipse center
+    X = xx - cx[:, None, None]
+    Y = yy - cy[:, None, None]
+
+    # Rotate coordinates
+    cos_t = angle.cos()[:, None, None]
+    sin_t = angle.sin()[:, None, None]
+
+    Xr = X * cos_t + Y * sin_t
+    Yr = -X * sin_t + Y * cos_t
+
+    # Ellipse equation (inside if <=1)
+    inside = (Xr / ax[:, None, None])**2 + (Yr / ay[:, None, None])**2 <= 1.0
+
+    # OR across ellipses → (h, w)
+    mask = inside.any(dim=0)
+
+    return 1 - mask.float()
 
 class PositionalEncoding2D(nn.Module):
 
@@ -204,11 +250,26 @@ def train(
         n_batches = 0
 
         for batch in train_loader:
-            # Assume batch is (inputs, targets)
-            inputs, targets = batch
-            inputs = inputs.to(device)
-            targets = targets.to(device)
+            targets = batch.to(device)
+            ell = [sample_ellipses_mask(config.resolution, config.num_ellipses_train, device=device) for i in range(batch.shape[0])]
+            ell = torch.stack(ell, dim=0).unsqueeze(1)
+            print(batch.shape, ell.shape)
+            inputs = (ell*(batch/256))
+            inputs = torch.cat((inputs, ell), 1)
+            print(inputs.shape)
+            fig, axes = plt.subplots(1, 2, figsize=(10, 5))
 
+            axes[0].imshow(inputs[0].permute(1, 2, 0))
+            axes[0].set_title("Image 1")
+            axes[0].axis("off")
+
+            axes[1].imshow(targets[0].permute(1, 2, 0)/256)
+            axes[1].set_title("Image 2")
+            axes[1].axis("off")
+
+            plt.show()
+            exit()  # once dataset is normalized we can just start training
+            
             optimizer.zero_grad()
             outputs = model(inputs)
             loss = criterion(outputs, targets)
@@ -268,7 +329,7 @@ def main():
     # assert out.shape[2:] == image.shape[2:]
     tra = ImageOnlyDataset(config, "train")
     val = ImageOnlyDataset(config, "validation")
-
+    # TODO: normalize dataset
     train(model, tra, val, config)
     pass
 

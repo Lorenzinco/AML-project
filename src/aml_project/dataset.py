@@ -6,7 +6,7 @@ import os
 import torch
 from PIL import Image
 import numpy as np
-import transformers
+from torchvision.transforms import Resize, PILToTensor, Compose
 
 from config import Config
 
@@ -67,7 +67,7 @@ class ImageOnlyDataset(torch.utils.data.Dataset):
         validation_dir = os.path.join(COCO_PATH, "val2017")
         self.image_paths = []
 
-        self.preprocess = transformers.AutoProcessor.from_pretrained(config.backbone, use_fast=True)
+        self.preprocess = Compose((PILToTensor(), Resize(config.resolution)))
 
         match split:
             case "train":
@@ -89,10 +89,8 @@ class ImageOnlyDataset(torch.utils.data.Dataset):
             
     def load_image(self, path):
         image = Image.open(path).convert("RGB")
-        image = np.array(image)
-        inputs = self.preprocess(images=image, return_tensors="pt")
-        pixel_values = inputs["pixel_values"].squeeze(0)
-        return pixel_values
+        image = self.preprocess(image)
+        return image
 
     def __len__(self):
         return len(self.image_paths)
