@@ -1,5 +1,3 @@
-import matplotlib
-matplotlib.use("Qt5Agg") # otherwise uv breaks
 from matplotlib import pyplot as plt
 import torch
 

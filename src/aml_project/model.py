@@ -7,9 +7,6 @@ import math
 from aml_project.dataset import ImageOnlyDataset
 from config import Config
 
-import matplotlib
-matplotlib.use("Qt5Agg")
-from matplotlib import pyplot as plt
 
 from aml_project.preprocess import Processor
 from aml_project.view import view_images
