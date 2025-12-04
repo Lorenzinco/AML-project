@@ -327,5 +327,6 @@ def main():
     pass
 
 
+print("qui entra")
 if __name__ == "__main__":
     main()
