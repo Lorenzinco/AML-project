@@ -1,6 +1,6 @@
 import numpy as np
 import torch
-
+from torchvision.transforms.functional import resize
 from config import Config
 
 
@@ -22,25 +22,9 @@ class Processor:
 
         self.resolution = config.resolution
 
-    def __call__(self, images: list[np.ndarray] | np.ndarray):
-        if isinstance(images, np.ndarray):
-            images = [images]
+    def __call__(self, images: torch.Tensor):
         processed_images = []
         for img in images:
-            # central crop
-            img = torch.tensor(img, dtype=torch.float32).permute(2, 0, 1)
-            h, w = img.shape[1], img.shape[2]
-            min_dim = min(h, w)
-            top = (h - min_dim) // 2
-            left = (w - min_dim) // 2
-            img = img[:, top : top + min_dim, left : left + min_dim]
-            # resize to target resolution
-            img = torch.nn.functional.interpolate(
-                img.unsqueeze(0),
-                size=self.resolution,
-                mode="bilinear",
-                align_corners=False,
-            ).squeeze(0)
             img = img / 255.0
             for c in range(3):
                 img[c, :, :] = (
@@ -48,17 +32,29 @@ class Processor:
                 ) / self.channel_stds[c]
             img = img.to(dtype=self.dtype)
             processed_images.append(img)
-        return {"pixel_values": torch.stack(processed_images)}
+        result = torch.stack(processed_images)
+        print(f"preprocessor output:{result.shape}")
+        return result
+
+    def denorm(self, pixel_values: torch.Tensor):
+        decoded_images = []
+        for img in pixel_values:
+            img = img.clone().cpu().float()
+            for c in range(3):
+                img[c, :, :] = (
+                    img[c, :, :] * self.channel_stds[c]
+                ) + self.channel_means[c]
+            decoded_images.append(img)
+        return decoded_images
 
     def decode(self, pixel_values: torch.Tensor):
         decoded_images = []
         for img in pixel_values:
-            img = img.permute(1, 2, 0)  # CHW to HWC
-            img = img.cpu().float().numpy()
+            img = img.cpu().float()
             for c in range(3):
-                img[:, :, c] = (
-                    img[:, :, c] * self.channel_stds[c]
+                img[c, :, :] = (
+                    img[c, :, :] * self.channel_stds[c]
                 ) + self.channel_means[c]
-            img = np.clip(img * 255.0, 0, 255).astype(np.uint8)
+            img = torch.clip(img * 255.0, 0, 255).to(dtype=torch.uint8)
             decoded_images.append(img)
-        return np.stack(decoded_images)
+        return decoded_images

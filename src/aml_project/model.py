@@ -11,6 +11,8 @@ import matplotlib
 matplotlib.use("Qt5Agg")
 from matplotlib import pyplot as plt
 
+from aml_project.preprocess import Processor
+from aml_project.view import view_images
 
 def sample_ellipses_mask(resolution:tuple[int, int], count_range: tuple[int, int], device="cpu"):
     """
@@ -233,6 +235,7 @@ def train(
     val_loader = torch.utils.data.DataLoader(
         val, batch_size=config.batch_size, shuffle=True
     )
+    preprocessor = Processor(config)
 
     criterion = nn.L1Loss()  # you can swap with nn.MSELoss() if you prefer
     optimizer = torch.optim.AdamW(
@@ -250,26 +253,17 @@ def train(
         n_batches = 0
 
         for batch in train_loader:
-            targets = batch.to(device)
+            orig = batch[0] / 255.0
+            batch = batch.to(device)
+            batch = preprocessor(batch)
+            targets = batch
             ell = [sample_ellipses_mask(config.resolution, config.num_ellipses_train, device=device) for i in range(batch.shape[0])]
             ell = torch.stack(ell, dim=0).unsqueeze(1)
             print(batch.shape, ell.shape)
-            inputs = (ell*(batch/256))
+            inputs = (ell*(batch))
             inputs = torch.cat((inputs, ell), 1)
             print(inputs.shape)
-            fig, axes = plt.subplots(1, 2, figsize=(10, 5))
-
-            axes[0].imshow(inputs[0].permute(1, 2, 0))
-            axes[0].set_title("Image 1")
-            axes[0].axis("off")
-
-            axes[1].imshow(targets[0].permute(1, 2, 0)/256)
-            axes[1].set_title("Image 2")
-            axes[1].axis("off")
-
-            plt.show()
-            exit()  # once dataset is normalized we can just start training
-            
+            # view_images([inputs[0], targets[0], orig]+preprocessor.denorm([inputs[0], targets[0]]), ["inputs", "targets", "orig", "inputs", "targets"])
             optimizer.zero_grad()
             outputs = model(inputs)
             loss = criterion(outputs, targets)
@@ -329,7 +323,6 @@ def main():
     # assert out.shape[2:] == image.shape[2:]
     tra = ImageOnlyDataset(config, "train")
     val = ImageOnlyDataset(config, "validation")
-    # TODO: normalize dataset
     train(model, tra, val, config)
     pass
 

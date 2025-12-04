@@ -6,7 +6,8 @@ import os
 import torch
 from PIL import Image
 import numpy as np
-from torchvision.transforms import Resize, PILToTensor, Compose
+from torchvision.transforms import Compose, PILToTensor, Resize, RandomCrop
+from aml_project.preprocess import Processor
 
 from config import Config
 
@@ -59,6 +60,17 @@ def download_coco():
     with open(coco_finished_download_marker, 'w') as f:
         f.write("COCO dataset download completed.")
 
+
+class RandomSizeCrop:
+    def __init__(self, min_size):
+        self.min_size = min_size
+    
+    def __call__(self, img):
+        max_size = min(img.shape[1:3])
+        min_size = min(self.min_size, max_size)
+        side = torch.randint(min_size, max_size+1, ())
+        return RandomCrop((side, side))(img)
+
 class ImageOnlyDataset(torch.utils.data.Dataset):
     def __init__(self, config: Config, split: Literal["train", "validation"] = "train"):
         download_coco()
@@ -67,10 +79,10 @@ class ImageOnlyDataset(torch.utils.data.Dataset):
         validation_dir = os.path.join(COCO_PATH, "val2017")
         self.image_paths = []
 
-        self.preprocess = Compose((PILToTensor(), Resize(config.resolution)))
 
         match split:
             case "train":
+                self.preprocess = Compose((PILToTensor(), RandomSizeCrop(128), Resize(config.resolution)))
                 for root, _, files in os.walk(unlabeled_dir):
                     for file in files:
                         if file.lower().endswith(('.png', '.jpg', '.jpeg')):
@@ -80,6 +92,7 @@ class ImageOnlyDataset(torch.utils.data.Dataset):
                         if file.lower().endswith(('.png', '.jpg', '.jpeg')):
                             self.image_paths.append(os.path.join(root, file))
             case "validation":
+                self.preprocess = Compose((PILToTensor(), Resize(config.resolution))) # avoid randomness during validation
                 for root, _, files in os.walk(validation_dir):
                     for file in files:
                         if file.lower().endswith(('.png', '.jpg', '.jpeg')):
