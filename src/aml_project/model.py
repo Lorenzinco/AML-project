@@ -10,6 +10,7 @@ from tqdm import tqdm
 
 from aml_project.preprocess import Processor
 from aml_project.view import view_images
+from pathlib import Path
 
 def sample_ellipses_mask(resolution:tuple[int, int], count_range: tuple[int, int], device="cpu"):
     """
@@ -213,7 +214,7 @@ class Photosciop(nn.Module):
         x = torch.cat([skip_connection, x], 1)
         return self.out_projection(x)
 
-
+MODEL_PATH = "data/model_weights"
 def train(
     model: nn.Module,
     train: torch.utils.data.Dataset,
@@ -243,6 +244,7 @@ def train(
 
     history: dict[str, list[float]] = {"train_loss": [], "val_loss": []}
 
+    best_loss = float("inf")
     for epoch in range(num_epochs):
         # ---- TRAIN ----
         model.train()
@@ -270,7 +272,7 @@ def train(
             n_batches += 1
             pbar.set_description(f"train loss = {running_loss/n_batches}")
 
-        epoch_train_loss = running_loss / max(n_batches, 1)
+        epoch_train_loss = running_loss / n_batches
         history["train_loss"].append(epoch_train_loss)
 
         # ---- VALIDATION (optional) ----
@@ -293,18 +295,17 @@ def train(
                     val_batches += 1
 
             epoch_val_loss = val_running_loss / max(val_batches, 1)
-            history["val_loss"].append(epoch_val_loss)
-
-        # Simple logging
-        if epoch_val_loss is not None:
-            print(
-                f"[Epoch {epoch + 1}/{num_epochs}] "
-                f"train_loss={epoch_train_loss:.4f} "
-                f"val_loss={epoch_val_loss:.4f}"
-            )
-        else:
-            print(f"[Epoch {epoch + 1}/{num_epochs}] train_loss={epoch_train_loss:.4f}")
-
+            if best_loss > epoch_val_loss:
+                best_loss = epoch_val_loss
+                Path(MODEL_PATH).parent.mkdir(parents=True, exist_ok=True)
+                torch.save(model.state_dict(), MODEL_PATH)
+                print("New best, weights saved")
+        print(
+            f"[Epoch {epoch + 1}/{num_epochs}] "
+            f"train_loss={epoch_train_loss:.4f} "
+            f"val_loss={epoch_val_loss:.4f}"
+        )
+        history["val_loss"].append(epoch_val_loss)
     return history
 
 
@@ -312,6 +313,9 @@ def main():
     # test
     config = Config()
     model = Photosciop(config)
+    Path(MODEL_PATH).parent.mkdir(parents=True, exist_ok=True)
+    torch.save(model.state_dict(), MODEL_PATH)
+    exit()
     # image = torch.randn((1, 4, config.resolution[0], config.resolution[1])).to(
     #     config.detect_device()
     # )
