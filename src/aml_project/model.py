@@ -205,7 +205,7 @@ class Photosciop(nn.Module):
 
         for layer in self.conv_decoder:
             skip_connection = output_list.pop(-1)
-            print(f"SkipConnectionsize, x: {skip_connection.shape}, {x.shape}")
+            # print(f"SkipConnectionsize, x: {skip_connection.shape}, {x.shape}")
             x = torch.cat([skip_connection, x], 1)
             x = layer(x)
 
@@ -256,10 +256,10 @@ def train(
             targets = batch
             ell = [sample_ellipses_mask(config.resolution, config.num_ellipses_train, device=device) for i in range(batch.shape[0])]
             ell = torch.stack(ell, dim=0).unsqueeze(1)
-            print(batch.shape, ell.shape)
+            # print(batch.shape, ell.shape)
             inputs = (ell*(batch))
             inputs = torch.cat((inputs, ell), 1)
-            print(inputs.shape)
+            # print(inputs.shape)
             # view_images([inputs[0], targets[0], orig]+preprocessor.denorm([inputs[0], targets[0]]), ["inputs", "targets", "orig", "inputs", "targets"])
             optimizer.zero_grad()
             outputs = model(inputs)
