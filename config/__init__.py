@@ -21,6 +21,7 @@ class Config(BaseModel):
     num_epochs: int = 10
     batch_size: int = 64
     num_ellipses_train: tuple[int, int] = (1, 5)
+    random_seed: int = 0
 
     def get_activation(self) -> torch.nn.Module:
         activations = {
