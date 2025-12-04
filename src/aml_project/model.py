@@ -313,9 +313,6 @@ def main():
     # test
     config = Config()
     model = Photosciop(config)
-    Path(MODEL_PATH).parent.mkdir(parents=True, exist_ok=True)
-    torch.save(model.state_dict(), MODEL_PATH)
-    exit()
     # image = torch.randn((1, 4, config.resolution[0], config.resolution[1])).to(
     #     config.detect_device()
     # )
