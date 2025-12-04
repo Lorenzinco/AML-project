@@ -33,7 +33,7 @@ class Processor:
             img = img.to(dtype=self.dtype)
             processed_images.append(img)
         result = torch.stack(processed_images)
-        print(f"preprocessor output:{result.shape}")
+        # print(f"preprocessor output:{result.shape}")
         return result
 
     def denorm(self, pixel_values: torch.Tensor):
