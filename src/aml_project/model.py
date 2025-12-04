@@ -6,7 +6,7 @@ import math
 
 from aml_project.dataset import ImageOnlyDataset
 from config import Config
-
+from tqdm import tqdm
 
 from aml_project.preprocess import Processor
 from aml_project.view import view_images
@@ -249,7 +249,7 @@ def train(
         running_loss = 0.0
         n_batches = 0
 
-        for batch in train_loader:
+        for batch in tqdm(train_loader):
             orig = batch[0] / 255.0
             batch = batch.to(device)
             batch = preprocessor(batch)
