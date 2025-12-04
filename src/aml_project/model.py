@@ -11,6 +11,7 @@ from tqdm import tqdm
 from aml_project.preprocess import Processor
 from aml_project.view import view_images
 from pathlib import Path
+import json
 
 def sample_ellipses_mask(resolution:tuple[int, int], count_range: tuple[int, int], device="cpu"):
     """
@@ -242,7 +243,7 @@ def train(
         weight_decay=getattr(config, "weight_decay", 0.0),
     )
 
-    history: dict[str, list[float]] = {"train_loss": [], "val_loss": []}
+    history: list[dict[str, float]] = []
 
     best_loss = float("inf")
     for epoch in range(num_epochs):
@@ -252,17 +253,13 @@ def train(
         n_batches = 0
 
         for batch in (pbar := tqdm(train_loader)):
-            orig = batch[0] / 255.0
             batch = batch.to(device)
             batch = preprocessor(batch)
             targets = batch
             ell = [sample_ellipses_mask(config.resolution, config.num_ellipses_train, device=device) for i in range(batch.shape[0])]
             ell = torch.stack(ell, dim=0).unsqueeze(1)
-            # print(batch.shape, ell.shape)
             inputs = (ell*(batch))
             inputs = torch.cat((inputs, ell), 1)
-            # print(inputs.shape)
-            # view_images([inputs[0], targets[0], orig]+preprocessor.denorm([inputs[0], targets[0]]), ["inputs", "targets", "orig", "inputs", "targets"])
             optimizer.zero_grad()
             outputs = model(inputs)
             loss = criterion(outputs, targets)
@@ -273,7 +270,6 @@ def train(
             pbar.set_description(f"train loss = {running_loss/n_batches}")
 
         epoch_train_loss = running_loss / n_batches
-        history["train_loss"].append(epoch_train_loss)
 
         # ---- VALIDATION (optional) ----
         epoch_val_loss = None
@@ -283,16 +279,22 @@ def train(
             val_batches = 0
 
             with torch.no_grad():
-                for batch in val_loader:
-                    inputs, targets = batch
-                    inputs = inputs.to(device)
-                    targets = targets.to(device)
+                for batch in (pbar := tqdm(train_loader)):
+
+                    batch = batch.to(device)
+                    batch = preprocessor(batch)
+                    targets = batch
+                    ell = [sample_ellipses_mask(config.resolution, config.num_ellipses_train, device=device) for i in range(batch.shape[0])]
+                    ell = torch.stack(ell, dim=0).unsqueeze(1)
+                    inputs = (ell*(batch))
+                    inputs = torch.cat((inputs, ell), 1)
 
                     outputs = model(inputs)
                     loss = criterion(outputs, targets)
 
                     val_running_loss += loss.item()
                     val_batches += 1
+                    pbar.set_description(f"val loss = {val_running_loss/val_batches}")
 
             epoch_val_loss = val_running_loss / max(val_batches, 1)
             if best_loss > epoch_val_loss:
@@ -305,9 +307,8 @@ def train(
             f"train_loss={epoch_train_loss:.4f} "
             f"val_loss={epoch_val_loss:.4f}"
         )
-        history["val_loss"].append(epoch_val_loss)
-    return history
-
+        history.append({"val_loss":epoch_val_loss, "train_loss":epoch_train_loss})
+    json.dump(history, open("data/loss_history.json", "w"))
 
 def main():
     # test
