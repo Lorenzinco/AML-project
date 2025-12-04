@@ -249,7 +249,7 @@ def train(
         running_loss = 0.0
         n_batches = 0
 
-        for batch in tqdm(train_loader):
+        for batch in (pbar := tqdm(train_loader)):
             orig = batch[0] / 255.0
             batch = batch.to(device)
             batch = preprocessor(batch)
@@ -266,9 +266,9 @@ def train(
             loss = criterion(outputs, targets)
             loss.backward()
             optimizer.step()
-
             running_loss += loss.item()
             n_batches += 1
+            pbar.set_description(f"train loss = {running_loss/n_batches}")
 
         epoch_train_loss = running_loss / max(n_batches, 1)
         history["train_loss"].append(epoch_train_loss)
