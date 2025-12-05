@@ -18,7 +18,7 @@ class Config(BaseModel):
     dropout: float = 0.1
     activation: str = "gelu"
     lr: float = 10e-3
-    num_epochs: int = 4 
+    num_epochs: int = 1
     batch_size: int = 64
     num_ellipses_train: tuple[int, int] = (1, 5)
     random_seed: int = 0

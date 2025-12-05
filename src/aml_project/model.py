@@ -267,7 +267,7 @@ def train(
             inputs = mask_batch(batch, config, device)
             optimizer.zero_grad()
             outputs = model(inputs)
-            mask = inputs[:, 4, :, :]
+            mask = inputs[:, 3, :, :]
             masked_outputs = outputs * (1 - mask) + targets * mask
             loss = criterion(masked_outputs, targets)
             loss.backward()
@@ -295,7 +295,7 @@ def train(
 
 
                     outputs = model(inputs)
-                    mask = inputs[:, 4, :, :]
+                    mask = inputs[:, 3, :, :]
                     masked_outputs = outputs * (1 - mask) + targets * mask
                     loss = criterion(masked_outputs, targets)
 
@@ -321,6 +321,7 @@ def main():
     # test
     config = Config()
     model = Photosciop(config)
+    model.load_state_dict(torch.load("data/model_weights", map_location=torch.device("cpu")))
 
     torch.manual_seed(config.random_seed)
 
@@ -330,6 +331,5 @@ def main():
     pass
 
 
-print("qui entra")
 if __name__ == "__main__":
     main()
