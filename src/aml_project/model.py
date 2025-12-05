@@ -267,7 +267,9 @@ def train(
             inputs = mask_batch(batch, config, device)
             optimizer.zero_grad()
             outputs = model(inputs)
-            loss = criterion(outputs, targets)
+            mask = inputs[:, 4, :, :]
+            masked_outputs = outputs * (1 - mask) + targets * mask
+            loss = criterion(masked_outputs, targets)
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
@@ -289,13 +291,13 @@ def train(
                     batch = batch.to(device)
                     batch = preprocessor(batch)
                     targets = batch
-                    ell = [sample_ellipses_mask(config.resolution, config.num_ellipses_train, device=device) for i in range(batch.shape[0])]
-                    ell = torch.stack(ell, dim=0).unsqueeze(1)
-                    inputs = (ell*(batch))
-                    inputs = torch.cat((inputs, ell), 1)
+                    inputs = mask_batch(batch, config, device)
+
 
                     outputs = model(inputs)
-                    loss = criterion(outputs, targets)
+                    mask = inputs[:, 4, :, :]
+                    masked_outputs = outputs * (1 - mask) + targets * mask
+                    loss = criterion(masked_outputs, targets)
 
                     val_running_loss += loss.item()
                     val_batches += 1

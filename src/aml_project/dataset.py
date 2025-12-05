@@ -73,7 +73,7 @@ class RandomSizeCrop:
 
 class ImageOnlyDataset(torch.utils.data.Dataset):
     def __init__(self, config: Config, split: Literal["train", "validation"] = "train"):
-        download_coco() # not needed when using kaggle
+        # download_coco() # not needed when using kaggle
         unlabeled_dir = os.path.join(COCO_PATH, "unlabeled2017")
         labeled_dir = os.path.join(COCO_PATH, "train2017")
         validation_dir = os.path.join(COCO_PATH, "val2017")
