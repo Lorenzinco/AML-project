@@ -6,7 +6,8 @@ import math
 
 from aml_project.dataset import ImageOnlyDataset
 from config import Config
-from tqdm.notebook import tqdm
+# from tqdm.notebook import tqdm
+from tqdm import tqdm
 
 from aml_project.preprocess import Processor
 from aml_project.view import view_images
@@ -267,7 +268,7 @@ def train(
             inputs = mask_batch(batch, config, device)
             optimizer.zero_grad()
             outputs = model(inputs)
-            mask = inputs[:, 3, :, :]
+            mask = inputs[:, 3:4, :, :]
             masked_outputs = outputs * (1 - mask) + targets * mask
             loss = criterion(masked_outputs, targets)
             loss.backward()
@@ -295,7 +296,7 @@ def train(
 
 
                     outputs = model(inputs)
-                    mask = inputs[:, 3, :, :]
+                    mask = inputs[:, 3:4, :, :]
                     masked_outputs = outputs * (1 - mask) + targets * mask
                     loss = criterion(masked_outputs, targets)
 
