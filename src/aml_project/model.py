@@ -286,7 +286,7 @@ def train(
             val_batches = 0
 
             with torch.no_grad():
-                for batch in (pbar := tqdm(train_loader)):
+                for batch in (pbar := tqdm(val_loader)):
 
                     batch = batch.to(device)
                     batch = preprocessor(batch)
