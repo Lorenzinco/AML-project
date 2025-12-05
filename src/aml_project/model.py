@@ -325,6 +325,7 @@ def main():
 
     torch.manual_seed(config.random_seed)
 
+    print("Loading dataset...")
     tra = ImageOnlyDataset(config, "train")
     val = ImageOnlyDataset(config, "validation")
     train(model, tra, val, config)
