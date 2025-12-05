@@ -55,6 +55,14 @@ def sample_ellipses_mask(resolution:tuple[int, int], count_range: tuple[int, int
 
     return 1 - mask.float()
 
+def mask_batch(batch: torch.Tensor, config:Config, device: torch.device):
+    assert config.resolution == batch.shape[2:], "batch is of an incorrect resolution"
+    ell = [sample_ellipses_mask(config.resolution, config.num_ellipses_train, device=device) for i in range(batch.shape[0])]
+    ell = torch.stack(ell, dim=0).unsqueeze(1)
+    masked = (ell*(batch))
+    masked = torch.cat((masked, ell), 1)
+    return masked
+
 class PositionalEncoding2D(nn.Module):
 
     def __init__(self, d_model: int, height: int, width: int):
@@ -256,10 +264,7 @@ def train(
             batch = batch.to(device)
             batch = preprocessor(batch)
             targets = batch
-            ell = [sample_ellipses_mask(config.resolution, config.num_ellipses_train, device=device) for i in range(batch.shape[0])]
-            ell = torch.stack(ell, dim=0).unsqueeze(1)
-            inputs = (ell*(batch))
-            inputs = torch.cat((inputs, ell), 1)
+            inputs = mask_batch(batch, config, device)
             optimizer.zero_grad()
             outputs = model(inputs)
             loss = criterion(outputs, targets)
@@ -314,13 +319,9 @@ def main():
     # test
     config = Config()
     model = Photosciop(config)
+
     torch.manual_seed(config.random_seed)
-    # image = torch.randn((1, 4, config.resolution[0], config.resolution[1])).to(
-    #     config.detect_device()
-    # )
-    # out = model(image)
-    # print(f"Outshape,inShape: {out.shape} , {image.shape}")
-    # assert out.shape[2:] == image.shape[2:]
+
     tra = ImageOnlyDataset(config, "train")
     val = ImageOnlyDataset(config, "validation")
     train(model, tra, val, config)
