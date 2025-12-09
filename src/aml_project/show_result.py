@@ -1,6 +1,17 @@
 from  aml_project import model, dataset, preprocess
-from aml_project.model import mask_batch
+import aml_project.model
+
+
+# def mask_batch(batch: torch.Tensor, config:Config, device: torch.device):
+#     assert config.resolution == batch.shape[2:], "batch is of an incorrect resolution"
+#     ell = [sample_ellipses_mask(config.resolution, config.num_ellipses_train, device=device) for i in range(batch.shape[0])]
+#     ell = torch.stack(ell, dim=0).unsqueeze(1)
+#     masked = (ell*(batch))
+#     masked = torch.cat((masked, ell), 1)
+#     return masked
+
 from aml_project.view import view_images
+from aml_project.model import mask_batch
 from config import Config
 import torch
 from torch import nn
@@ -11,18 +22,26 @@ def main():
     device = config.detect_device()
     preprocessor = preprocess.Processor(config)
     with torch.no_grad():
-        model = model.Photosciop(config)
-        model.load_state_dict(torch.load("data/model_weights", map_location=torch.device("cpu")))
+        model = aml_project.model.Photosciop(config).to(device)
+        # model.load_state_dict(torch.load("data/model_weights", map_location=device))
         ds = dataset.ImageOnlyDataset(config, "validation")
-        img = preprocessor(ds[0].unsqueeze(0))
+        img = preprocessor(ds[0].unsqueeze(0)).to(device)
         batch = img
         inputs = mask_batch(batch, config, device)
         inp = inputs[:, :3, :, :]
+        targets = batch
         out = model(inputs)
-        images_to_plot = preprocessor.denorm(torch.cat((inp, out, img, img - out, inp - out) ))
-        # images_to_plot = (torch.cat((inputs[:, :3, :, :], model(inputs), img)))
+        mask = inputs[:, 3:4, :, :]
         
-        view_images(images_to_plot, ["input", "output", "expected", "out - expect", "inp - out"])
+        masked_outputs = out * (1 - mask) + img * mask
+        # masked_outputs = out
+        loss = (masked_outputs - targets).abs().sum() / (1 - mask).sum()
+
+        
+        images_to_plot = [(masked_outputs).squeeze(0), inputs[0]]
+        # images_to_plot = (torch.cat((inp, masked_outputs, img, img - masked_outputs, inp - masked_outputs) ))
+        # images_to_plot = (torch.cat((inputs[:, :3, :, :], model(inputs), img)))
+        view_images(images_to_plot, ["output", "targets"])
         
 
 if __name__ == "__main__":

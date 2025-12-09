@@ -44,6 +44,7 @@ class Processor:
                 img[c, :, :] = (
                     img[c, :, :] * self.channel_stds[c]
                 ) + self.channel_means[c]
+            img = torch.clip(img, 0, 1)
             decoded_images.append(img)
         return decoded_images
 

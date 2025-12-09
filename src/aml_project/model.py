@@ -1,17 +1,20 @@
 from typing import Literal
+import warnings
 
+import lpips
 import torch
 from torch import nn
 import math 
 
 from aml_project.dataset import ImageOnlyDataset
 from config import Config
-from tqdm.notebook import tqdm
+from tqdm import tqdm
 
 from aml_project.preprocess import Processor
 from aml_project.view import view_images
 from pathlib import Path
 import json
+import transformers
 
 def sample_ellipses_mask(resolution:tuple[int, int], count_range: tuple[int, int], device="cpu"):
     """
@@ -65,7 +68,7 @@ def mask_batch(batch: torch.Tensor, config:Config, device: torch.device):
 
 class PositionalEncoding2D(nn.Module):
 
-    def __init__(self, d_model: int, height: int, width: int):
+    def __init__(self, d_model: int, height: int, width: int, config: Config):
         super().__init__()
 
         self.d_model = d_model
@@ -99,6 +102,7 @@ class PositionalEncoding2D(nn.Module):
 
         # Rearrange to (1, H*W, d_model) for easy addition to sequences
         pe_2d = pe_2d.view(height * width, d_model).unsqueeze(0)  # (1, H*W, d_model)
+        pe_2d = pe_2d.to(config.detect_device())
 
         self.register_buffer("pe", pe_2d, persistent=False)
 
@@ -125,21 +129,50 @@ class ConvBlock(nn.Module):
         scale: Literal["up", "down"],
     ):
         super().__init__()
-        self.conv = nn.Conv2d(
-            in_channels=in_channels,
-            out_channels=out_channels,
-            kernel_size=config.kernel_size,
-            device=config.detect_device(),
-            padding=config.kernel_size // 2,
-            padding_mode="reflect",
-        )
-        self.scale = nn.Upsample(scale_factor=2) if scale == "up" else nn.MaxPool2d(2)
-        self.activation = config.get_activation()
+        match scale:
+            case "down":
+                self.scale = nn.Sequential(
+                    nn.Conv2d(
+                        in_channels=in_channels,
+                        out_channels=out_channels,
+                        kernel_size=2,
+                        stride=2,
+                        device=config.detect_device(),
+                    ),  
+                )
+            case "up":
+                self.scale = nn.Sequential(
+                    nn.Upsample(
+                        scale_factor=2,
+                        mode="bilinear",
+                        align_corners=False,
+                    ),
+                    nn.Conv2d(
+                        in_channels=in_channels,
+                        out_channels=out_channels,
+                        kernel_size=1,
+                        device=config.detect_device(),
+                    ),
+                )
+            case _:
+                raise ValueError(f"Unsupported scale: {scale}")
+        self.conv = nn.Sequential()
+        for _ in range(3):
+            self.conv.append(nn.GroupNorm(8, out_channels, device=config.detect_device()))
+            self.conv.append(config.get_activation())
+            self.conv.append(nn.Conv2d(
+                in_channels=out_channels,
+                out_channels=out_channels,
+                kernel_size=config.kernel_size,
+                device=config.detect_device(),
+                padding=config.kernel_size // 2,
+                padding_mode="reflect"))
+        
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.conv(x)
-        x = self.activation(x)
-        return self.scale(x)
+        x = self.scale(x)
+        x = x + self.conv(x)
+        return x
 
 
 class Photosciop(nn.Module):
@@ -166,6 +199,7 @@ class Photosciop(nn.Module):
             d_model=config.bottleneck,
             height=H // (2 ** config.conv_blocks),
             width=W // (2 ** config.conv_blocks),
+            config=config,
         )
 
         self.encoder = nn.TransformerEncoder(
@@ -174,7 +208,7 @@ class Photosciop(nn.Module):
                 config.heads,
                 config.dim_feed_forward,
                 config.dropout,
-                activation=config.activation,
+                activation="gelu",
                 device=config.detect_device(),
                 batch_first=True,
             ),
@@ -215,6 +249,7 @@ class Photosciop(nn.Module):
 
         for layer in self.conv_decoder:
             skip_connection = output_list.pop(-1)
+            
             # print(f"SkipConnectionsize, x: {skip_connection.shape}, {x.shape}")
             x = torch.cat([skip_connection, x], 1)
             x = layer(x)
@@ -222,6 +257,8 @@ class Photosciop(nn.Module):
         skip_connection = output_list.pop(-1)
         x = torch.cat([skip_connection, x], 1)
         return self.out_projection(x)
+
+
 
 MODEL_PATH = "data/model_weights"
 def train(
@@ -236,19 +273,34 @@ def train(
     num_epochs = config.num_epochs
     lr = config.lr
 
+    sampler = torch.utils.data.RandomSampler(train, replacement=False, num_samples=10000)
     train_loader = torch.utils.data.DataLoader(
-        train, batch_size=config.batch_size, shuffle=True
+        train, batch_size=config.batch_size, sampler=sampler
     )
     val_loader = torch.utils.data.DataLoader(
         val, batch_size=config.batch_size, shuffle=True
     )
     preprocessor = Processor(config)
 
-    criterion = nn.L1Loss()  # you can swap with nn.MSELoss() if you prefer
+    with warnings.catch_warnings(action="ignore"):
+        lpips_loss = lpips.LPIPS(net='vgg').to(device)
+    def loss_fn(predicted: torch.Tensor, target: torch.Tensor, mask: torch.Tensor):
+        _masked_output_image = predicted * (1 - mask) + target * mask
+        return predicted.sub(target).abs().mul(1-mask).sum() / (1-mask).sum() +\
+            0.1 * lpips_loss(predicted, target).mean()
+
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=lr,
         weight_decay=getattr(config, "weight_decay", 0.0),
+    )
+    
+
+    lr_scheduler = transformers.get_cosine_schedule_with_warmup(
+        optimizer, 
+        num_warmup_steps=100, 
+        num_training_steps=num_epochs * len(train_loader),
+        num_cycles=0.5,
     )
 
     history: list[dict[str, float]] = []
@@ -260,21 +312,22 @@ def train(
         running_loss = 0.0
         n_batches = 0
 
-        for batch in (pbar := tqdm(train_loader)):
+        for batch in (pbar := tqdm(train_loader, desc=f"Train {epoch+1}/{num_epochs}", colour="blue")):
             batch = batch.to(device)
             batch = preprocessor(batch)
             targets = batch
             inputs = mask_batch(batch, config, device)
+            mask = inputs[:, 3:4, :, :]
             optimizer.zero_grad()
             outputs = model(inputs)
-            mask = inputs[:, 3:4, :, :]
-            masked_outputs = outputs * (1 - mask) + targets * mask
-            loss = criterion(masked_outputs, targets)
+            loss = loss_fn(outputs, targets, mask)
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
+            lr_scheduler.step()
             running_loss += loss.item()
             n_batches += 1
-            pbar.set_description(f"train loss = {running_loss/n_batches}")
+            pbar.set_postfix({"loss": running_loss/n_batches})
 
         epoch_train_loss = running_loss / n_batches
 
@@ -286,22 +339,20 @@ def train(
             val_batches = 0
 
             with torch.no_grad():
-                for batch in (pbar := tqdm(val_loader)):
+                for batch in (pbar := tqdm(val_loader, desc=f"Validation {epoch+1}/{num_epochs}", colour="yellow")):
 
                     batch = batch.to(device)
                     batch = preprocessor(batch)
                     targets = batch
                     inputs = mask_batch(batch, config, device)
-
+                    mask = inputs[:, 3:4, :, :]
 
                     outputs = model(inputs)
-                    mask = inputs[:, 3:4, :, :]
-                    masked_outputs = outputs * (1 - mask) + targets * mask
-                    loss = criterion(masked_outputs, targets)
+                    loss = loss_fn(outputs, targets, mask)
 
                     val_running_loss += loss.item()
                     val_batches += 1
-                    pbar.set_description(f"val loss = {val_running_loss/val_batches}")
+                    pbar.set_postfix({"loss": val_running_loss/val_batches})
 
             epoch_val_loss = val_running_loss / max(val_batches, 1)
             if best_loss > epoch_val_loss:
@@ -321,11 +372,9 @@ def main():
     # test
     config = Config()
     model = Photosciop(config)
-    model.load_state_dict(torch.load("data/model_weights", map_location=torch.device("cpu")))
 
     torch.manual_seed(config.random_seed)
 
-    print("Loading dataset...")
     tra = ImageOnlyDataset(config, "train")
     val = ImageOnlyDataset(config, "validation")
     train(model, tra, val, config)
