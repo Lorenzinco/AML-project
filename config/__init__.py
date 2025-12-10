@@ -9,18 +9,19 @@ class Config(BaseModel):
     resolution: tuple[int, int] = (128, 128)
     dtype: str = "bfloat16"
     kernel_size: int = 3
-    bottleneck: int = 128
+    bottleneck: int = 1024
     conv_blocks: int = 3
     in_channels: int = 4
     heads: int = 8
-    dim_feed_forward: int = 512
-    num_layers: int = 5
+    dim_feed_forward: int = 2048
+    transformer_depth_min: int = 2
+    num_layers: int = 3
     dropout: float = 0.1
     activation: str = "gelu"
     lr: float = 10e-3
-    num_epochs: int = 10
-    batch_size: int = 64
-    num_ellipses_train: tuple[int, int] = (3, 5)
+    num_epochs: int = 100
+    batch_size: int = 8
+    num_ellipses_train: tuple[int, int] = (3, 10)
     random_seed: int = 0
 
     def get_activation(self) -> torch.nn.Module:
