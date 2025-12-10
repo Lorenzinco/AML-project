@@ -11,6 +11,7 @@ import aml_project.model
 #     return masked
 
 from aml_project.view import view_images
+from aml_project.save import save_images
 from aml_project.model import mask_batch
 from config import Config
 import torch
@@ -42,6 +43,7 @@ def main():
         # images_to_plot = (torch.cat((inp, masked_outputs, img, img - masked_outputs, inp - masked_outputs) ))
         # images_to_plot = (torch.cat((inputs[:, :3, :, :], model(inputs), img)))
         view_images(images_to_plot, ["output", "targets"])
+        save_images(images_to_plot, ["output", "targets"],"data/out.jpg")
         
 
 if __name__ == "__main__":
