@@ -1,6 +1,7 @@
 from  aml_project import model, dataset, preprocess
 from aml_project.model import mask_batch
 from aml_project.view import view_images
+from aml_project.save import save_images
 from config import Config
 import torch
 from torch import nn
@@ -21,5 +22,6 @@ with torch.no_grad():
     # images_to_plot = (torch.cat((inputs[:, :3, :, :], model(inputs), img)))
     
     view_images(images_to_plot, ["input", "output", "expected", "out - expect", "inp - out"])
+    save_images(images_to_plot, ["input", "output", "expected", "out - expect", "inp - out"],"data/outputs")
     
 
