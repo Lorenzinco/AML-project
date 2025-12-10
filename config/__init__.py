@@ -14,7 +14,7 @@ class Config(BaseModel):
     in_channels: int = 4
     heads: int = 8
     dim_feed_forward: int = 512
-    num_layers: int = 3
+    num_layers: int = 5
     dropout: float = 0.1
     activation: str = "gelu"
     lr: float = 10e-3

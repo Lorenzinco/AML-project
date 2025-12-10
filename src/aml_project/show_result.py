@@ -43,8 +43,8 @@ def main():
         images_to_plot = [ inputs[0], (masked_outputs).squeeze(0), targets[0]]
         images_to_plot = preprocessor.denorm(images_to_plot)
         # images_to_plot = (torch.cat((inputs[:, :3, :, :], model(inputs), img)))
-        view_images(images_to_plot, ["output", "targets"])
-        save_images(images_to_plot, ["output", "targets"],"data/out.jpg")
+        #view_images(images_to_plot, ["output", "targets"])
+        save_images(images_to_plot, ["input","output", "targets"],"data/out.jpg")
 
         
 
