@@ -24,9 +24,10 @@ def main():
     preprocessor = preprocess.Processor(config)
     with torch.no_grad():
         model = aml_project.model.Photosciop(config).to(device)
-        # model.load_state_dict(torch.load("data/model_weights", map_location=device))
+        model.load_state_dict(torch.load("data/model_weights", map_location=device))
         ds = dataset.ImageOnlyDataset(config, "validation")
-        img = preprocessor(ds[0].unsqueeze(0)).to(device)
+        index = torch.randint(0, len(ds)+1, ()).item()
+        img = preprocessor(ds[index].unsqueeze(0)).to(device)
         batch = img
         inputs = mask_batch(batch, config, device)
         inp = inputs[:, :3, :, :]
@@ -39,11 +40,12 @@ def main():
         loss = (masked_outputs - targets).abs().sum() / (1 - mask).sum()
 
         
-        images_to_plot = [(masked_outputs).squeeze(0), inputs[0]]
-        # images_to_plot = (torch.cat((inp, masked_outputs, img, img - masked_outputs, inp - masked_outputs) ))
+        images_to_plot = [ inputs[0], (masked_outputs).squeeze(0), targets[0]]
+        images_to_plot = preprocessor.denorm(images_to_plot)
         # images_to_plot = (torch.cat((inputs[:, :3, :, :], model(inputs), img)))
         view_images(images_to_plot, ["output", "targets"])
         save_images(images_to_plot, ["output", "targets"],"data/out.jpg")
+
         
 
 if __name__ == "__main__":
