@@ -20,6 +20,7 @@ def sample_ellipses_mask(
     resolution: tuple[int, int],
     count_range: tuple[int, int],
     config: Config,
+    sizes: tuple[float, float],
     device="cpu",
 ):
     """
@@ -50,10 +51,10 @@ def sample_ellipses_mask(
     ).uniform_(-1, 1)  # type:ignore
     ax = torch.empty(
         count, device=config.detect_device(), dtype=config.get_dtype_pt()
-    ).uniform_(0.2, 0.5)  # type:ignore
+    ).uniform_(sizes[0], sizes[1])  # type:ignore
     ay = torch.empty(
         count, device=config.detect_device(), dtype=config.get_dtype_pt()
-    ).uniform_(0.2, 0.5)  # type:ignore
+    ).uniform_(sizes[0], sizes[1])  # type:ignore
     angle = torch.empty(
         count, device=config.detect_device(), dtype=config.get_dtype_pt()
     ).uniform_(0, torch.pi)  # type:ignore
@@ -82,16 +83,35 @@ def sample_ellipses_mask(
     return 1 - mask.to(config.get_dtype_pt())
 
 
-def mask_batch(batch: torch.Tensor, config: Config, device: str):
+def mask_batch(
+    batch: torch.Tensor, config: Config, device: str, steps: int, max_steps: int
+):
     assert config.resolution == batch.shape[2:], "batch is of an incorrect resolution"
+    progress = steps / max_steps
+
+    progress = min(progress, config.mask_warmup_percentage) * (
+        1 / config.mask_warmup_percentage
+    )
+
+    sizes = (
+        config.size_range_start[0] * (1 - progress)
+        + config.size_range_end[0] * progress,
+        config.size_range_start[1] * (1 - progress)
+        + config.size_range_end[1] * progress,
+    )
+
     ell = [
         sample_ellipses_mask(
-            config.resolution, config.num_ellipses_train, config=config, device=device
+            config.resolution,
+            config.num_ellipses_train,
+            config=config,
+            device=device,
+            sizes=sizes,
         )
         for i in range(batch.shape[0])
     ]
     ell = torch.stack(ell, dim=0).unsqueeze(1)
-    masked = ell * (batch) + (1 - ell)*torch.randn_like(batch)
+    masked = ell * (batch) + (1 - ell) * torch.randn_like(batch) * 0.1
     masked = torch.cat((masked, ell), 1)
     return masked
 
@@ -199,7 +219,7 @@ class TransformerBlock(nn.Module):
                 )
             case _:
                 raise ValueError(f"Unsupported scale: {scale}")
-        self.conv = None
+        self.transformer = None
         if depth >= config.transformer_depth_min:
             self.transformer = nn.TransformerEncoder(
                 nn.TransformerEncoderLayer(
@@ -214,6 +234,11 @@ class TransformerBlock(nn.Module):
                 ),
                 config.num_layers,
                 mask_check=False,
+                norm=nn.LayerNorm(
+                    out_channels,
+                    device=config.detect_device(),
+                    dtype=config.get_dtype_pt(),
+                ),
             )
             H, W = config.resolution
             if scale == "down":
@@ -231,42 +256,40 @@ class TransformerBlock(nn.Module):
                 width=block_W,
                 config=config,
             )
-        else:
-            self.conv = nn.Sequential()
-            for _ in range(3):
-                self.conv.append(
-                    nn.GroupNorm(
-                        8,
-                        out_channels,
-                        device=config.detect_device(),
-                        dtype=config.get_dtype_pt(),
-                    )
+        self.conv = nn.Sequential()
+        for _ in range(3):
+            self.conv.append(
+                nn.GroupNorm(
+                    8,
+                    out_channels,
+                    device=config.detect_device(),
+                    dtype=config.get_dtype_pt(),
                 )
-                self.conv.append(config.get_activation())
-                self.conv.append(
-                    nn.Conv2d(
-                        in_channels=out_channels,
-                        out_channels=out_channels,
-                        kernel_size=config.kernel_size,
-                        device=config.detect_device(),
-                        dtype=config.get_dtype_pt(),
-                        padding=config.kernel_size // 2,
-                        padding_mode="reflect",
-                    )
+            )
+            self.conv.append(config.get_activation())
+            self.conv.append(
+                nn.Conv2d(
+                    in_channels=out_channels,
+                    out_channels=out_channels,
+                    kernel_size=config.kernel_size,
+                    device=config.detect_device(),
+                    dtype=config.get_dtype_pt(),
+                    padding=config.kernel_size // 2,
+                    padding_mode="reflect",
                 )
+            )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.scale(x)
-        if self.conv is not None:
-            return x + self.conv(x)
-        else:
-            skip_connection = x
+        skip_connection = x
+        x = self.conv(x)
+        if self.transformer is not None:
             b, c, h, w = x.shape
             x = x.view(b, c, h * w).permute(0, 2, 1)
             x = self.pos_encoding(x)
             x = self.transformer(x)
             x = x.permute(0, 2, 1).view(b, c, h, w)
-            return x + skip_connection
+        return skip_connection + x
 
 
 class Photosciop(nn.Module):
@@ -314,6 +337,11 @@ class Photosciop(nn.Module):
             ),
             config.num_layers,
             mask_check=False,
+            norm=nn.LayerNorm(
+                config.bottleneck,
+                device=config.detect_device(),
+                dtype=config.get_dtype_pt(),
+            ),
         )
 
         self.conv_decoder = nn.ModuleList()
@@ -376,9 +404,7 @@ def train(
     num_epochs = config.num_epochs
     lr = config.lr
 
-    sampler = torch.utils.data.RandomSampler(
-        train, replacement=False, num_samples=10000
-    )  # type:ignore
+    sampler = torch.utils.data.RandomSampler(train, replacement=False, num_samples=5000)  # type:ignore
     train_loader = torch.utils.data.DataLoader(
         train, batch_size=config.batch_size, sampler=sampler
     )
@@ -391,16 +417,16 @@ def train(
         lpips_loss = lpips.LPIPS(net="vgg").to(config.detect_device())
 
     def loss_fn(predicted: torch.Tensor, target: torch.Tensor, mask: torch.Tensor):
-        _masked_output_image = predicted * (1 - mask) + target * mask
+        masked_output_image = predicted * (1 - mask) + target * mask
         return (
             predicted.sub(target).abs().mul(1 - mask).sum() / (1 - mask).sum()
-            + lpips_loss(predicted, target).mean()
+            + lpips_loss(masked_output_image, target).sum() / (1 - mask).sum()
         )
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=lr,
-        weight_decay=getattr(config, "weight_decay", 0.0),
+        weight_decay=getattr(config, "weight_decay", 0),
     )
 
     lr_scheduler = transformers.get_cosine_schedule_with_warmup(
@@ -413,6 +439,8 @@ def train(
     history: list[dict[str, float]] = []
 
     best_loss = float("inf")
+    steps = 0
+    max_steps = len(train_loader) * num_epochs
     for epoch in range(num_epochs):
         # ---- TRAIN ----
         model.train()
@@ -424,10 +452,11 @@ def train(
                 train_loader, desc=f"Train {epoch + 1}/{num_epochs}", colour="blue"
             )
         ):
+            steps += 1
             batch = batch.to(config.detect_device())
             batch = preprocessor(batch)
             targets = batch
-            inputs = mask_batch(batch, config, config.detect_device())
+            inputs = mask_batch(batch, config, config.detect_device(), steps, max_steps)
             mask = inputs[:, 3:4, :, :]
             optimizer.zero_grad()
             outputs = model(inputs)
@@ -460,7 +489,9 @@ def train(
                     batch = batch.to(config.detect_device())
                     batch = preprocessor(batch)
                     targets = batch
-                    inputs = mask_batch(batch, config, config.detect_device())
+                    inputs = mask_batch(
+                        batch, config, config.detect_device(), 1, 1
+                    )
                     mask = inputs[:, 3:4, :, :]
 
                     outputs = model(inputs)

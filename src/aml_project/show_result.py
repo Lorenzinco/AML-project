@@ -29,7 +29,7 @@ def main():
         index = torch.randint(0, len(ds)+1, ()).item()
         img = preprocessor(ds[index].unsqueeze(0)).to(device)
         batch = img
-        inputs = mask_batch(batch, config, device)
+        inputs = mask_batch(batch, config, device,0,1)
         inp = inputs[:, :3, :, :]
         targets = batch
         out = model(inputs)

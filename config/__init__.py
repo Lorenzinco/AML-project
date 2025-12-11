@@ -16,22 +16,24 @@ class Config(BaseModel):
     dim_feed_forward: int = 2048
     transformer_depth_min: int = 2
     num_layers: int = 3
-    dropout: float = 0.1
+    dropout: float = 0.0
     activation: str = "gelu"
-    lr: float = 10e-3
+    lr: float = 1e-4
     num_epochs: int = 100
     batch_size: int = 8
     num_ellipses_train: tuple[int, int] = (3, 10)
     random_seed: int = 0
+    size_range_start: tuple[float, float] = (0.1, 0.2)
+    size_range_end: tuple[float, float] = (0.1, 0.5)
+    mask_warmup_percentage: float = 0.1
 
     def get_activation(self) -> torch.nn.Module:
         activations = {
-            'relu': torch.nn.ReLU(),
-            'gelu': torch.nn.GELU(),
-            'tanh': torch.nn.Tanh()
+            "relu": torch.nn.ReLU(),
+            "gelu": torch.nn.GELU(),
+            "tanh": torch.nn.Tanh(),
         }
         return activations[self.activation]
-
 
     def get_dtype_pt(self) -> torch.dtype:
         if self.dtype == "float32":
