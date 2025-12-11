@@ -40,11 +40,11 @@ def main():
         loss = (masked_outputs - targets).abs().sum() / (1 - mask).sum()
 
         
-        images_to_plot = [ inputs[0], (masked_outputs).squeeze(0), targets[0]]
+        images_to_plot = [ inputs[0], out[0], (masked_outputs).squeeze(0), targets[0]]
         images_to_plot = preprocessor.denorm(images_to_plot)
         # images_to_plot = (torch.cat((inputs[:, :3, :, :], model(inputs), img)))
         #view_images(images_to_plot, ["output", "targets"])
-        save_images(images_to_plot, ["input","output", "targets"],"data/out.jpg")
+        save_images(images_to_plot, ["input","output","masked output", "targets"],"data/out.jpg")
 
         
 

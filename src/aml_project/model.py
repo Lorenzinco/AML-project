@@ -7,6 +7,7 @@ from typing import Literal
 import lpips
 import torch
 import transformers
+from performer_pytorch import Performer
 from torch import nn
 from tqdm import tqdm
 
@@ -221,25 +222,12 @@ class TransformerBlock(nn.Module):
                 raise ValueError(f"Unsupported scale: {scale}")
         self.transformer = None
         if depth >= config.transformer_depth_min:
-            self.transformer = nn.TransformerEncoder(
-                nn.TransformerEncoderLayer(
-                    out_channels,
-                    config.heads,
-                    out_channels * 4,
-                    config.dropout,
-                    activation="gelu",
-                    device=config.detect_device(),
-                    dtype=config.get_dtype_pt(),
-                    batch_first=True,
-                ),
-                config.num_layers,
-                mask_check=False,
-                norm=nn.LayerNorm(
-                    out_channels,
-                    device=config.detect_device(),
-                    dtype=config.get_dtype_pt(),
-                ),
-            )
+            self.transformer = Performer(
+                dim=out_channels,
+                dim_head=out_channels // config.heads,
+                depth=config.num_layers,
+                heads=config.heads,
+            ).to(device=config.detect_device(),dtype=config.get_dtype_pt())
             H, W = config.resolution
             if scale == "down":
                 # input to block has H / 2^depth
@@ -324,25 +312,12 @@ class Photosciop(nn.Module):
             config=config,
         )
 
-        self.encoder = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(
-                config.bottleneck,
-                config.heads,
-                config.dim_feed_forward,
-                config.dropout,
-                activation="gelu",
-                device=config.detect_device(),
-                dtype=config.get_dtype_pt(),
-                batch_first=True,
-            ),
-            config.num_layers,
-            mask_check=False,
-            norm=nn.LayerNorm(
-                config.bottleneck,
-                device=config.detect_device(),
-                dtype=config.get_dtype_pt(),
-            ),
-        )
+        self.encoder = Performer(
+            dim=config.bottleneck,
+            dim_head=config.bottleneck // config.heads,
+            depth=config.num_layers,
+            heads=config.heads,
+        ).to(device=config.detect_device(),dtype=config.get_dtype_pt())
 
         self.conv_decoder = nn.ModuleList()
         for i in reversed(range(config.conv_blocks)):
@@ -406,10 +381,10 @@ def train(
 
     sampler = torch.utils.data.RandomSampler(train, replacement=False, num_samples=5000)  # type:ignore
     train_loader = torch.utils.data.DataLoader(
-        train, batch_size=config.batch_size, sampler=sampler
+        train, batch_size=config.batch_size, sampler=sampler, num_workers=4
     )
     val_loader = torch.utils.data.DataLoader(
-        val, batch_size=config.batch_size, shuffle=True
+        val, batch_size=config.batch_size, shuffle=True, num_workers=4
     )
     preprocessor = Processor(config)
 
@@ -489,9 +464,7 @@ def train(
                     batch = batch.to(config.detect_device())
                     batch = preprocessor(batch)
                     targets = batch
-                    inputs = mask_batch(
-                        batch, config, config.detect_device(), 1, 1
-                    )
+                    inputs = mask_batch(batch, config, config.detect_device(), 1, 1)
                     mask = inputs[:, 3:4, :, :]
 
                     outputs = model(inputs)
@@ -513,7 +486,7 @@ def train(
             f"val_loss={epoch_val_loss:.4f}"
         )
         history.append({"val_loss": epoch_val_loss, "train_loss": epoch_train_loss})  # type:ignore
-    json.dump(history, open("data/loss_history.json", "w"))
+        json.dump(history, open("data/loss_history.json", "w"))
 
 
 def main():
