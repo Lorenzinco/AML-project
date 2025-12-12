@@ -14,17 +14,18 @@ class Config(BaseModel):
     in_channels: int = 4
     heads: int = 8
     dim_feed_forward: int = 1024
-    transformer_depth_min: int = 2
+    transformer_depth_min: int = 1
     num_layers: int = 6
     dropout: float = 0.0
     activation: str = "gelu"
     lr: float = 1e-4
     num_epochs: int = 100
-    batch_size: int = 8
+    batch_size: int = 4
     num_ellipses_train: tuple[int, int] = (3, 10)
+    num_lines_train: tuple[int,int] = (6, 15) 
     random_seed: int = 0
-    size_range_start: tuple[float, float] = (0.1, 0.2)
-    size_range_end: tuple[float, float] = (0.1, 0.5)
+    size_range_start: tuple[float, float] = (0.005, 0.01)
+    size_range_end: tuple[float, float] = (0.05, 0.1)
     mask_warmup_percentage: float = 0.1
 
     def get_activation(self) -> torch.nn.Module:
