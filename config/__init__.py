@@ -27,6 +27,7 @@ class Config(BaseModel):
     size_range_start: tuple[float, float] = (0.005, 0.01)
     size_range_end: tuple[float, float] = (0.05, 0.1)
     mask_warmup_percentage: float = 0.1
+    d_warmup: int= 3
 
     def get_activation(self) -> torch.nn.Module:
         activations = {

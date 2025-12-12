@@ -13,7 +13,7 @@ import transformers
 from performer_pytorch import Performer
 from torch import nn
 from tqdm import tqdm
-
+from torch.nn.functional import binary_cross_entropy as BCE
 from aml_project.dataset import ImageOnlyDataset
 from aml_project.preprocess import Processor
 from aml_project.view import view_images
@@ -396,6 +396,57 @@ class TransformerBlock(nn.Module):
         
         return (x,outgoing_skip_connection)
 
+
+def spectral_norm(module, mode=True):
+    if mode:
+        return nn.utils.spectral_norm(module)
+
+    return module
+
+class Discriminator(nn.Module): # from t-former github
+    def __init__(self, in_channels=3, use_sigmoid=True, use_spectral_norm=True, init_weights=True):
+        super(Discriminator, self).__init__()
+        self.use_sigmoid = use_sigmoid
+
+        self.conv1 = self.features = nn.Sequential(
+            spectral_norm(nn.Conv2d(in_channels=in_channels, out_channels=64, kernel_size=4, stride=2, padding=1, bias=not use_spectral_norm), use_spectral_norm),
+            nn.LeakyReLU(0.2, inplace=True),
+        )
+
+        self.conv2 = nn.Sequential(
+            spectral_norm(nn.Conv2d(in_channels=64, out_channels=128, kernel_size=4, stride=2, padding=1, bias=not use_spectral_norm), use_spectral_norm),
+            nn.LeakyReLU(0.2, inplace=True),
+        )
+
+        self.conv3 = nn.Sequential(
+            spectral_norm(nn.Conv2d(in_channels=128, out_channels=256, kernel_size=4, stride=2, padding=1, bias=not use_spectral_norm), use_spectral_norm),
+            nn.LeakyReLU(0.2, inplace=True),
+        )
+
+        self.conv4 = nn.Sequential(
+            spectral_norm(nn.Conv2d(in_channels=256, out_channels=512, kernel_size=4, stride=1, padding=1, bias=not use_spectral_norm), use_spectral_norm),
+            nn.LeakyReLU(0.2, inplace=True),
+        )
+
+        self.conv5 = nn.Sequential(
+            spectral_norm(nn.Conv2d(in_channels=512, out_channels=1, kernel_size=4, stride=1, padding=1, bias=not use_spectral_norm), use_spectral_norm),
+        )
+
+    def forward(self, x):
+        conv1 = self.conv1(x)
+        conv2 = self.conv2(conv1)
+        conv3 = self.conv3(conv2)
+        conv4 = self.conv4(conv3)
+        conv5 = self.conv5(conv4)
+
+        outputs = conv5
+        if self.use_sigmoid:
+            outputs = torch.sigmoid(conv5)
+
+        return outputs
+
+
+
 class Photosciop(nn.Module):
     def __init__(self, config: Config):
         super().__init__()
@@ -480,11 +531,32 @@ class Photosciop(nn.Module):
         return self.out_projection(x)
 
 
+def set_requires_grad(model:nn.Module, flag: bool):
+    for p in model.parameters():
+        p.requires_grad = flag
+
+
 MODEL_PATH = "data/model_weights"
+
+def step_d(discriminator:Discriminator, ground_truth:torch.Tensor, outputs:torch.Tensor, optimizer_d:torch.Module):
+    set_requires_grad(discriminator, True)
+    discriminator.train()
+
+    optimizer_d.zero_grad()
+
+    out_fake = discriminator(outputs)
+    out_true = discriminator(ground_truth)
+
+    loss = BCE(out_true, torch.ones_like(out_true)) + \
+        BCE(out_fake, torch.zeros_like(out_fake)) / 2
+    loss.backward()
+    optimizer_d.step()
+
 
 
 def train(
     model: nn.Module,
+    discriminator: Discriminator,
     train: torch.utils.data.Dataset,
     val: torch.utils.data.Dataset,
     config: Config,
@@ -505,12 +577,18 @@ def train(
     with warnings.catch_warnings(action="ignore"):
         lpips_loss = lpips.LPIPS(net="vgg").to(config.detect_device())
 
-    def loss_fn(predicted: torch.Tensor, target: torch.Tensor, mask: torch.Tensor):
+    def loss_fn(predicted: torch.Tensor, target: torch.Tensor, mask: torch.Tensor, use_adversarial:bool):
         masked_output_image = predicted * (1 - mask) + target * mask
-        return (
+        loss = (
             predicted.sub(target).abs().mul(1 - mask).sum() / (1 - mask).sum()
             + lpips_loss(masked_output_image, target).sum() / (1 - mask).sum()
         )
+        if use_adversarial:
+            out_pred = discriminator(predicted)
+            adv_loss = BCE(out_pred, torch.ones_like(out_pred))
+            loss += 0.1 * adv_loss
+
+        return loss
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -525,6 +603,12 @@ def train(
         num_cycles=0.5,
     )
 
+    optimizer_d = torch.optim.AdamW(
+        discriminator.parameters(),
+        lr=lr,
+        weight_decay=getattr(config, "weight_decay", 0),
+    )
+
     history: list[dict[str, float]] = []
 
     best_loss = float("inf")
@@ -532,10 +616,10 @@ def train(
     max_steps = len(train_loader) * num_epochs
     for epoch in range(start_epoch,num_epochs):
         # ---- TRAIN ----
-        model.train()
         running_loss = 0.0
         n_batches = 0
 
+        model.train()
         for batch in (
             pbar := tqdm(
                 train_loader, desc=f"Train {epoch + 1}/{num_epochs}", colour="blue"
@@ -547,9 +631,12 @@ def train(
             targets = batch
             inputs = mask_batch(batch, config, config.detect_device(), steps, max_steps)
             mask = inputs[:, 3:4, :, :]
+
             optimizer.zero_grad()
             outputs = model(inputs)
-            loss = loss_fn(outputs, targets, mask)
+
+            step_d(discriminator, targets, outputs.detach(), optimizer_d)
+            loss = loss_fn(outputs, targets, mask, epoch >= config.d_warmup)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
@@ -613,6 +700,7 @@ def main():
     args = parser.parse_args()
 
     config = Config()
+    discriminator = Discriminator()
     model = Photosciop(config)
     torch.manual_seed(config.random_seed)
 
@@ -626,7 +714,7 @@ def main():
 
     tra = ImageOnlyDataset(config, "train")
     val = ImageOnlyDataset(config, "validation")
-    train(model, tra, val, config, start_epoch=args.start_epoch)
+    train(model, discriminator, tra, val, config, start_epoch=args.start_epoch)
     pass
 
 
