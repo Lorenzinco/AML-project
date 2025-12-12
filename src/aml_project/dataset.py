@@ -101,8 +101,9 @@ class ImageOnlyDataset(torch.utils.data.Dataset):
                 raise ValueError("split must be either 'train' or 'validation'")
             
     def load_image(self, path):
-        image = Image.open(path).convert("RGB")
-        image = self.preprocess(image)
+        with Image.open(path) as im:
+            im = im.convert("RGB")
+            image = self.preprocess(im)   # safe: preprocess reads pixels while file is open
         return image
 
     def __len__(self):

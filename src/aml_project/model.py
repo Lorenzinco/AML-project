@@ -3,6 +3,9 @@ import math
 import warnings
 from pathlib import Path
 from typing import Literal
+import argparse
+import numpy as np
+import cv2
 
 import lpips
 import torch
@@ -15,6 +18,8 @@ from aml_project.dataset import ImageOnlyDataset
 from aml_project.preprocess import Processor
 from aml_project.view import view_images
 from config import Config
+
+BEST_WEIGHTS = Path("data/model_weights")
 
 
 def sample_ellipses_mask(
@@ -83,6 +88,36 @@ def sample_ellipses_mask(
 
     return 1 - mask.to(config.get_dtype_pt())
 
+def sample_lines_mask(
+    resolution: tuple[int, int],
+    count_range: tuple[int, int],
+    config: Config,
+    sizes: tuple[float, float],
+    device="cpu",
+) -> torch.Tensor:
+    """
+    Returns a binary mask with random lines drawn between random points,
+    with thickness defined by sizes.
+    """
+    H, W = resolution
+    mask_np = np.ones((H, W), dtype=np.float32)
+
+    count = torch.randint(count_range[0], count_range[1] + 1, (1,)).item()
+
+    for _ in range(count):
+        x1, y1 = np.random.randint(0, W), np.random.randint(0, H)
+        x2, y2 = np.random.randint(0, W), np.random.randint(0, H)
+
+        # Choose random thickness based on sizes (scaled by image size)
+        rel_thickness = np.random.uniform(sizes[0], sizes[1])
+        thickness = max(1, int(rel_thickness * min(H, W)))
+
+        # Draw black line (0) on white mask (1)
+        cv2.line(mask_np, (x1, y1), (x2, y2), color=0, thickness=thickness)
+
+    # Convert to PyTorch tensor
+    mask = torch.from_numpy(mask_np).to(device=config.detect_device(), dtype=config.get_dtype_pt())
+    return mask
 
 def mask_batch(
     batch: torch.Tensor, config: Config, device: str, steps: int, max_steps: int
@@ -102,12 +137,19 @@ def mask_batch(
     )
 
     ell = [
-        sample_ellipses_mask(
-            config.resolution,
-            config.num_ellipses_train,
-            config=config,
-            device=device,
-            sizes=sizes,
+        # sample_ellipses_mask(
+        #     config.resolution,
+        #     config.num_ellipses_train,
+        #     config=config,
+        #     device=device,
+        #     sizes=sizes,
+        # )
+        sample_lines_mask(
+	        config.resolution,
+	        config.num_lines_train,
+	        config=config,
+	        device=device,
+	        sizes=sizes,
         )
         for i in range(batch.shape[0])
     ]
@@ -115,6 +157,37 @@ def mask_batch(
     masked = ell * (batch) + (1 - ell) * torch.randn_like(batch) * 0.1
     masked = torch.cat((masked, ell), 1)
     return masked
+
+class GatedConv(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, device, dtype, stride, config, padding, residual=True):
+        super().__init__()
+        self.conv_a = nn.Conv2d(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=kernel_size,
+            stride=stride,
+            device=device,
+            dtype=dtype,
+            padding=padding
+        )
+        self.conv_b = nn.Conv2d(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=kernel_size,
+            stride=stride,
+            device=device,
+            dtype=dtype,
+            padding=padding
+        )
+        self.activation = config.get_activation()
+        self.residual = residual
+    def forward(self, x):
+      x_a = self.activation(self.conv_a(x))
+      x_gate = self.conv_b(x)
+      result = x_a * x_gate
+      if self.residual:
+          result += x
+      return result
 
 
 class PositionalEncoding2D(nn.Module):
@@ -181,6 +254,8 @@ class PositionalEncoding2D(nn.Module):
         return x + self.pe  # (1, L, D) will broadcast over batch #type:ignore
 
 
+
+
 class TransformerBlock(nn.Module):
     def __init__(
         self,
@@ -221,64 +296,105 @@ class TransformerBlock(nn.Module):
             case _:
                 raise ValueError(f"Unsupported scale: {scale}")
         self.transformer = None
+        
         if depth >= config.transformer_depth_min:
-            self.transformer = Performer(
-                dim=out_channels,
-                dim_head=out_channels // config.heads,
-                depth=config.num_layers,
-                heads=config.heads,
-            ).to(device=config.detect_device(),dtype=config.get_dtype_pt())
             H, W = config.resolution
             if scale == "down":
-                # input to block has H / 2^depth
-                # after stride-2 conv we get H / 2^(depth+1)
-                block_H = H // (2 ** (depth + 1))
-                block_W = W // (2 ** (depth + 1))
-            else:  # scale == "up"
-                # after upsample, output is H / 2^depth
-                block_H = H // (2**depth)
-                block_W = W // (2**depth)
+                t_dim = in_channels
+                block_H = H // (2 ** depth)
+                block_W = W // (2 ** depth)
+            else:  # "up": transformer is AFTER upsample, so it sees out_channels
+                t_dim = out_channels
+                block_H = H // (2 ** depth)
+                block_W = W // (2 ** depth)
+        
             self.pos_encoding = PositionalEncoding2D(
-                d_model=out_channels,
+                d_model=t_dim,
                 height=block_H,
                 width=block_W,
                 config=config,
             )
+            self.transformer = Performer(
+                dim=t_dim,
+                dim_head=t_dim // config.heads,
+                depth=config.num_layers,
+                heads=config.heads,
+            ).to(device=config.detect_device(), dtype=config.get_dtype_pt())
+        self.activation = config.get_activation()
         self.conv = nn.Sequential()
-        for _ in range(3):
-            self.conv.append(
-                nn.GroupNorm(
-                    8,
-                    out_channels,
-                    device=config.detect_device(),
-                    dtype=config.get_dtype_pt(),
-                )
+        
+        if scale == "down":
+          self.conv.append(
+              nn.GroupNorm(
+                  8,
+                  in_channels,
+                  device=config.detect_device(),
+                  dtype=config.get_dtype_pt(),
+              )
+          )
+          self.conv.append(
+            GatedConv(
+	             in_channels=in_channels,
+	             out_channels=in_channels,
+	             kernel_size=3,
+	             stride=1,
+	             device=config.detect_device(),
+	             dtype=config.get_dtype_pt(),
+		          config=config,
+		          padding=1,
+		            )
+          )
+        else:
+          self.conv.append(
+               nn.GroupNorm(
+                   8,
+                   out_channels,
+                   device=config.detect_device(),
+                   dtype=config.get_dtype_pt(),
+               )
+           )
+          self.conv.append(
+            GatedConv(
+             in_channels=out_channels,
+             out_channels=out_channels,
+             kernel_size=3,
+             stride=1,
+             device=config.detect_device(),
+             dtype=config.get_dtype_pt(),
+            config=config,
+            padding=1,
             )
-            self.conv.append(config.get_activation())
-            self.conv.append(
-                nn.Conv2d(
-                    in_channels=out_channels,
-                    out_channels=out_channels,
-                    kernel_size=config.kernel_size,
-                    device=config.detect_device(),
-                    dtype=config.get_dtype_pt(),
-                    padding=config.kernel_size // 2,
-                    padding_mode="reflect",
-                )
-            )
+        )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, incoming_skip_connection: torch.Tensor|None = None, scale: Literal["up", "down"] = "up") -> torch.Tensor|tuple[torch.Tensor,torch.Tensor]:
+      if scale == "up":
         x = self.scale(x)
+        assert incoming_skip_connection is not None, "Skip connection was none in upsample"
+        x = x + incoming_skip_connection
         skip_connection = x
         x = self.conv(x)
+        if self.transformer is not None:
+          b, c, h, w = x.shape
+          x = x.view(b, c, h * w).permute(0, 2, 1)
+          x = self.pos_encoding(x)
+          x = self.transformer(x)
+          x = x.permute(0, 2, 1).view(b, c, h, w)
+        x = x + skip_connection
+        return x
+      else:
+        skip_connection = x
         if self.transformer is not None:
             b, c, h, w = x.shape
             x = x.view(b, c, h * w).permute(0, 2, 1)
             x = self.pos_encoding(x)
             x = self.transformer(x)
             x = x.permute(0, 2, 1).view(b, c, h, w)
-        return skip_connection + x
-
+        x = skip_connection + x
+        x = self.conv(x)
+        outgoing_skip_connection = x
+        x = self.scale(x)
+        
+        return (x,outgoing_skip_connection)
 
 class Photosciop(nn.Module):
     def __init__(self, config: Config):
@@ -324,7 +440,7 @@ class Photosciop(nn.Module):
             self.conv_decoder.append(
                 TransformerBlock(
                     config,
-                    in_channels=config.get_base_dim() * (2 ** (i + 2)),
+                    in_channels=config.get_base_dim() * (2 ** (i + 1)),
                     out_channels=config.get_base_dim() * (2**i),
                     scale="up",
                     depth=i,
@@ -332,7 +448,7 @@ class Photosciop(nn.Module):
             )
 
         self.out_projection = nn.Conv2d(
-            config.get_base_dim() * 2,
+            config.get_base_dim(),
             3,
             kernel_size=1,
             device=config.detect_device(),
@@ -343,12 +459,12 @@ class Photosciop(nn.Module):
         output_list: list[torch.Tensor] = []
 
         x = self.in_projection(x)
-
-        for layer in self.conv_encoder:
-            output_list.append(x)
-            x = layer(x)
-
         output_list.append(x)
+        for layer in self.conv_encoder:
+            x,skip = layer(x,None,"down")
+            output_list.append(skip)
+
+ 
         b, c, h, w = x.shape
         x = x.view(b, c, h * w).permute(0, 2, 1)
         x = self.pos_encoding(x)
@@ -357,13 +473,10 @@ class Photosciop(nn.Module):
 
         for layer in self.conv_decoder:
             skip_connection = output_list.pop(-1)
-
-            # print(f"SkipConnectionsize, x: {skip_connection.shape}, {x.shape}")
-            x = torch.cat([skip_connection, x], 1)
-            x = layer(x)
+            x = layer(x,skip_connection,"up")
 
         skip_connection = output_list.pop(-1)
-        x = torch.cat([skip_connection, x], 1)
+        x += skip_connection
         return self.out_projection(x)
 
 
@@ -375,11 +488,12 @@ def train(
     train: torch.utils.data.Dataset,
     val: torch.utils.data.Dataset,
     config: Config,
+    start_epoch: int = 0
 ) -> dict[str, list[float]]:  # type:ignore
     num_epochs = config.num_epochs
     lr = config.lr
 
-    sampler = torch.utils.data.RandomSampler(train, replacement=False, num_samples=5000)  # type:ignore
+    sampler = torch.utils.data.RandomSampler(train, replacement=False, num_samples=2500)  # type:ignore
     train_loader = torch.utils.data.DataLoader(
         train, batch_size=config.batch_size, sampler=sampler, num_workers=4
     )
@@ -414,9 +528,9 @@ def train(
     history: list[dict[str, float]] = []
 
     best_loss = float("inf")
-    steps = 0
+    steps = start_epoch * len(train_loader)
     max_steps = len(train_loader) * num_epochs
-    for epoch in range(num_epochs):
+    for epoch in range(start_epoch,num_epochs):
         # ---- TRAIN ----
         model.train()
         running_loss = 0.0
@@ -491,14 +605,28 @@ def train(
 
 def main():
     # test
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--resume-best", action="store_true",
+                        help="Load best weights and keep training")
+    parser.add_argument("--start-epoch", type=int, default=0,
+                        help="Epoch number to start training from (e.g. 26)")
+    args = parser.parse_args()
+
     config = Config()
     model = Photosciop(config)
-
     torch.manual_seed(config.random_seed)
+
+
+    if args.resume_best:
+        if not BEST_WEIGHTS.exists():
+            raise FileNotFoundError(f"Best weights not found at {BEST_WEIGHTS}")
+        state = torch.load(BEST_WEIGHTS, map_location=config.detect_device())
+        model.load_state_dict(state)
+        print(f"Loaded best weights from {BEST_WEIGHTS}")
 
     tra = ImageOnlyDataset(config, "train")
     val = ImageOnlyDataset(config, "validation")
-    train(model, tra, val, config)
+    train(model, tra, val, config, start_epoch=args.start_epoch)
     pass
 
 
