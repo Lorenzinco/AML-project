@@ -181,6 +181,7 @@ class GatedConv(nn.Module):
         )
         self.activation = config.get_activation()
         self.residual = residual
+        assert not residual or in_channels == out_channels
     def forward(self, x):
       x_a = self.activation(self.conv_a(x))
       x_gate = self.conv_b(x)
@@ -407,7 +408,6 @@ class Discriminator(nn.Module): # from t-former github
     def __init__(self, in_channels=3, use_sigmoid=True, use_spectral_norm=True, init_weights=True):
         super(Discriminator, self).__init__()
         self.use_sigmoid = use_sigmoid
-
         self.conv1 = self.features = nn.Sequential(
             spectral_norm(nn.Conv2d(in_channels=in_channels, out_channels=64, kernel_size=4, stride=2, padding=1, bias=not use_spectral_norm), use_spectral_norm),
             nn.LeakyReLU(0.2, inplace=True),
@@ -538,7 +538,7 @@ def set_requires_grad(model:nn.Module, flag: bool):
 
 MODEL_PATH = "data/model_weights"
 
-def step_d(discriminator:Discriminator, ground_truth:torch.Tensor, outputs:torch.Tensor, optimizer_d:torch.Module):
+def step_d(discriminator:Discriminator, ground_truth:torch.Tensor, outputs:torch.Tensor, optimizer_d:nn.Module):
     set_requires_grad(discriminator, True)
     discriminator.train()
 
@@ -547,11 +547,11 @@ def step_d(discriminator:Discriminator, ground_truth:torch.Tensor, outputs:torch
     out_fake = discriminator(outputs)
     out_true = discriminator(ground_truth)
 
-    loss = BCE(out_true, torch.ones_like(out_true)) + \
-        BCE(out_fake, torch.zeros_like(out_fake)) / 2
+    loss = (BCE(out_true, torch.ones_like(out_true)) + \
+        BCE(out_fake, torch.zeros_like(out_fake))) / 2
     loss.backward()
     optimizer_d.step()
-
+    set_requires_grad(discriminator, False)
 
 
 def train(
@@ -584,7 +584,7 @@ def train(
             + lpips_loss(masked_output_image, target).sum() / (1 - mask).sum()
         )
         if use_adversarial:
-            out_pred = discriminator(predicted)
+            out_pred = discriminator(masked_output_image)
             adv_loss = BCE(out_pred, torch.ones_like(out_pred))
             loss += 0.1 * adv_loss
 
@@ -635,7 +635,9 @@ def train(
             optimizer.zero_grad()
             outputs = model(inputs)
 
-            step_d(discriminator, targets, outputs.detach(), optimizer_d)
+            masked_output_image = outputs * (1 - mask) + targets * mask
+            step_d(discriminator, targets, masked_output_image.detach(), optimizer_d)
+
             loss = loss_fn(outputs, targets, mask, epoch >= config.d_warmup)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -669,7 +671,7 @@ def train(
                     mask = inputs[:, 3:4, :, :]
 
                     outputs = model(inputs)
-                    loss = loss_fn(outputs, targets, mask)
+                    loss = loss_fn(outputs, targets, mask, False)
 
                     val_running_loss += loss.item()
                     val_batches += 1
@@ -680,6 +682,9 @@ def train(
                 best_loss = epoch_val_loss
                 Path(MODEL_PATH).parent.mkdir(parents=True, exist_ok=True)
                 torch.save(model.state_dict(), MODEL_PATH)
+                torch.save(optimizer.state_dict(), "data/optimizer")
+                torch.save(optimizer_d.state_dict(), "data/optimizer_d")
+                torch.save(lr_scheduler.state_dict(), "data/scheduler")
                 print("New best, weights saved")
         print(
             f"[Epoch {epoch + 1}/{num_epochs}] "
@@ -688,6 +693,7 @@ def train(
         )
         history.append({"val_loss": epoch_val_loss, "train_loss": epoch_train_loss})  # type:ignore
         json.dump(history, open("data/loss_history.json", "w"))
+
 
 
 def main():
