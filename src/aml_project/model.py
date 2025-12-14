@@ -550,8 +550,10 @@ def step_d(discriminator:Discriminator, ground_truth:torch.Tensor, outputs:torch
     loss = (BCE(out_true, torch.ones_like(out_true)) + \
         BCE(out_fake, torch.zeros_like(out_fake))) / 2
     loss.backward()
+    torch.nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=1.0)
     optimizer_d.step()
     set_requires_grad(discriminator, False)
+    return loss
 
 
 def train(
@@ -618,7 +620,7 @@ def train(
         # ---- TRAIN ----
         running_loss = 0.0
         n_batches = 0
-
+        d_loss = 0
         model.train()
         for batch in (
             pbar := tqdm(
@@ -636,7 +638,7 @@ def train(
             outputs = model(inputs)
 
             masked_output_image = outputs * (1 - mask) + targets * mask
-            step_d(discriminator, targets, masked_output_image.detach(), optimizer_d)
+            d_loss += step_d(discriminator, targets, masked_output_image.detach(), optimizer_d)
 
             loss = loss_fn(outputs, targets, mask, epoch >= config.d_warmup)
             loss.backward()
@@ -645,9 +647,10 @@ def train(
             lr_scheduler.step()
             running_loss += loss.item()
             n_batches += 1
-            pbar.set_postfix({"loss": running_loss / n_batches})
+            pbar.set_postfix({"loss": running_loss / n_batches, "D loss":d_loss / n_batches})
 
         epoch_train_loss = running_loss / n_batches
+        epoch_d_loss = d_loss / n_batches
 
         # ---- VALIDATION (optional) ----
         epoch_val_loss = None
