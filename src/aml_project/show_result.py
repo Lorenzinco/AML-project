@@ -25,6 +25,9 @@ def main():
     with torch.no_grad():
         model = aml_project.model.Photosciop(config).to(device)
         model.load_state_dict(torch.load("data/model_weights", map_location=device))
+        total_params = sum(p.numel() for p in model.parameters())
+        print(total_params)
+        exit()
         ds = dataset.ImageOnlyDataset(config, "validation")
         index = torch.randint(0, len(ds)+1, ()).item()
         img = preprocessor(ds[index].unsqueeze(0)).to(device)
