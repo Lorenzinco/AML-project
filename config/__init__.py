@@ -6,38 +6,28 @@ from pydantic import BaseModel
 class Config(BaseModel):
     backbone: str = "facebook/dinov2-small"
     device: str | None = None
-    resolution: tuple[int, int] = (512, 512)
-    dtype: str = "bfloat16"
+    resolution: tuple[int, int] = (128, 128)
+    dtype: str = "float32"
     kernel_size: int = 3
-    bottleneck: int = 256
+    bottleneck: int = 512
     conv_blocks: int = 3
     in_channels: int = 4
     heads: int = 8
-<<<<<<< HEAD
-    dim_feed_forward: int = 256
-    transformer_depth_min: int = 0
+    dim_feed_forward: int = 1024
+    transformer_depth_min: int = 1
     num_layers: int = 6
     dropout: float = 0.0
     activation: str = "gelu"
     lr: float = 1e-4
     num_epochs: int = 100
-    batch_size: int = 2
+    batch_size: int = 4
     num_ellipses_train: tuple[int, int] = (3, 10)
     num_lines_train: tuple[int,int] = (6, 15) 
-=======
-    dim_feed_forward: int = 512
-    num_layers: int = 5
-    dropout: float = 0.1
-    activation: str = "gelu"
-    lr: float = 10e-3
-    num_epochs: int = 100
-    batch_size: int = 64
-    num_ellipses_train: tuple[int, int] = (1, 5)
->>>>>>> main
     random_seed: int = 0
     size_range_start: tuple[float, float] = (0.005, 0.01)
     size_range_end: tuple[float, float] = (0.05, 0.1)
     mask_warmup_percentage: float = 0.1
+    d_warmup: int= 3
 
     def get_activation(self) -> torch.nn.Module:
         activations = {
