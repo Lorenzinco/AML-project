@@ -7,4 +7,4 @@ It is an image inpainting U-net which end result took a lot of inspiration from 
 
 Final version's output looks blurry if trying to cut out complex portion of the image, very nice if the background is static/simple.
 
-![An example output](https://github.com/Lorenzinco/AML-project/tree/main/gormita.jpg "An example output")
+![An example output](https://github.com/Lorenzinco/AML-project/tree/main/gormita.jpg)
