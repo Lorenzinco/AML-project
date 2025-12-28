@@ -1,0 +1,215 @@
+\documentclass[conference]{IEEEtran}
+% \IEEEoverridecommandlockouts
+% The preceding line is only needed to identify funding in the first footnote. If that is unneeded, please comment it out.
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{comment}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage[colorinlistoftodos]{todonotes}
+\usepackage{algorithm} 
+\usepackage[noend]{algpseudocode} 
+\usepackage[backend=biber,style=numeric]{biblatex}
+\addbibresource{references.bib}
+
+
+\newcommand{\etal}{et~al.\ }
+\newcommand{\ie}{\textit{i.e.},\ }
+\newcommand{\eg}{e.g.,\ }
+\newcommand{\cf}{cf.\ }
+
+
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+    
+\definecolor{mGreen}{rgb}{0,0.6,0}
+\definecolor{mGray}{rgb}{0.5,0.5,0.5}
+\definecolor{mPurple}{rgb}{0.58,0,0.82}
+\definecolor{backgroundColour}{rgb}{0.95,0.95,0.92}
+\lstset{
+  %\backgroundcolor=\color{backgroundColour},
+  commentstyle=\color{mGreen},
+  keywordstyle=\color{magenta},
+  numberstyle=\tiny\color{mGray},
+  stringstyle=\color{mPurple},
+  basicstyle=\scriptsize\ttfamily,
+  breakatwhitespace=true,
+  breaklines=true,
+  captionpos=b,
+  keepspaces=true,
+  numbers=left,
+  numbersep=5pt,
+  showspaces=false,
+  showstringspaces=false,
+  showtabs=false,
+  tabsize=2,
+  language=C,
+  morekeywords={u8,u16,u32,u64,i8,uni16,i32,i64,size_t,def},
+  xleftmargin=5mm, % Adjust left margin
+}
+
+\begin{document}
+%
+% paper title
+% Titles are generally capitalized except for words such as a, an, and, as,
+% at, but, by, for, in, nor, of, on, or, the, to and up, which are usually
+% not capitalized unless they are the first or last word of the title.
+% Linebreaks \\ can be used within to get better formatting as desired.
+% Do not put math or special symbols in the title.
+\title{Advanced Machine Learning \\ \bigskip  {\bf \Large Photosciop - Project report}}
+%
+%
+% author names and IEEE memberships
+% note positions of commas and nonbreaking spaces ( ~ ) LaTeX will not break
+% a structure at a ~ so this keeps an author's name from being broken across
+% two lines.
+% use \thanks{} to gain access to the first footnote area
+% a separate \thanks must be used for each paragraph as LaTeX2e's \thanks
+% was not built to handle multiple paragraphs
+%
+\makeatletter
+\newcommand{\linebreakand}{
+  \end{@IEEEauthorhalign}
+  \hfill\mbox{}\par
+  \mbox{}\hfill\begin{@IEEEauthorhalign}
+}
+\makeatother
+
+\author{
+
+\IEEEauthorblockN{Lorenzo Colombini}
+\IEEEauthorblockA{
+\textit{Sapienza University of Rome}\\
+lorenzinco@theromanxpl0.it}
+
+\and
+
+\IEEEauthorblockN{Andrea Puddu}
+\IEEEauthorblockA{
+\textit{Sapienza University of Rome}\\
+andreapudd@gmail.com}
+}
+
+% The paper headers
+\markboth{Journal of \LaTeX\ Class Files,~Vol.~14, No.~8, August~2015}%
+{Shell \MakeLowercase{\textit{et al.}}: Bare Demo of IEEEtran.cls for IEEE Journals}
+
+% make the title area
+\maketitle
+
+% TODO: edit this enum at the end of paper
+
+% As a general rule, do not put math, special symbols or citations
+% in the abstract or keywords.
+\begin{abstract}
+This report describes a progressive study of image inpainting architectures, starting from our initial idea and incrementally introducing additional components to address observed limitations. Through this process, our design gradually converged towards the T-Former architecture proposed by Deng et al., allowing us to understand the role and necessity of each architectural choice. While our final model did not achieve results comparable to the original paper, the work provided clear insight into why each component of a high-performing inpainting network is essential, emphasizing understanding over raw performance.
+\end{abstract}
+
+\maketitle 
+
+\section{Introduction}
+Image inpainting aims to reconstruct missing or corrupted regions of an image in a visually coherent way by leveraging surrounding context. Recent deep learning methods, especially transformer-based and diffusion-based models, have shown strong performance due to their ability to capture global dependencies. In this study project, we investigate many different U-net-like architectures for image inpainting and compare different approaches to understand the key components of state-of-the-art inpainting models.
+
+\section{Related Work}
+Early image inpainting methods relied on diffusion-based or patch-based techniques, which struggled with large missing regions and complex semantics. Deep learning introduced CNN-based encoder–decoder and U-Net architectures that learn semantic priors from data \cite{Elharrouss_2025}, but purely convolutional models remain limited in capturing long-range dependencies.
+
+To address this, recent works explore attention mechanisms and transformer-based models for global context modeling, often adopting hybrid CNN–transformer architectures to mitigate the high computational cost of standard transformers. The T-Former architecture \cite{Deng_2022} follows this direction by employing a linear attention mechanism within a U-Net-like framework, enabling efficient global dependency modeling. Our work is situated in this context, aiming to progressively understand the architectural choices that lead to such high-performing inpainting models rather than to outperform them.
+
+
+\section{Our different approaches}
+This section describes the successive architectural versions explored in this work, each addressing limitations observed in the previous approach.
+
+\subsection{Version 1}
+Our first approach was a fully convolutional U-Net architecture with a single transformer block placed at the bottleneck. The convolutional encoder–decoder effectively captured low-level and mid-level features, while the transformer was intended to introduce global context awareness. However, experimental results showed that this configuration struggled to understand the semantic context of the missing regions. The inpainted outputs were dominated by blurred patches, indicating that a single transformer layer at the deepest level was insufficient to propagate global information back to higher-resolution features.
+\begin{figure}[h]
+ \centering
+ \includegraphics[width=\linewidth]{FullyConv.png}
+ \caption{Architecture of the first version. Fully convolutional except for the bottleneck.}
+ \label{fig:first}
+\end{figure}
+
+\subsection{Version 2} In the second iteration, we increased the number of transformer blocks, integrating them into the convolutional encoder and decoder stages rather than just the bottleneck. This aimed to better capture features at different resolutions. While the model began to produce color-coherent outputs, it still lacked a deep semantic understanding of the scene, as the limited number of transformer layers was insufficient to extract the necessary features for complex inpainting tasks.
+\begin{figure}[h]
+ \centering
+ \includegraphics[width=\linewidth]{transconv.png}
+ \caption{Architecture of the second version. The number of transformers on the sides of the U-net increased.}
+ \label{fig:second}
+\end{figure}
+
+\subsection{Version 3} To address the computational limitations of standard transformers, we adopted the Performer architecture \cite{choromanski2022rethinkingattentionperformers}, which utilizes a linear attention mechanism. This reduced the attention complexity from quadratic to linear with respect to image size, allowing us to insert transformer blocks at multiple scales of the U-Net without prohibitive memory costs. This modification improved the model's understanding of the scene, though the resolution of the inpainted regions remained low.
+
+\begin{figure}[h]
+ \centering
+ \includegraphics[width=\linewidth]{linear_transf.png}
+ \caption{Architecture of the third version. Transformers have been replaced with linear ones and another transformer layer was added}
+ \label{fig:lintransf}
+\end{figure}
+
+
+
+\subsection{Version 4} We introduced Gated Convolutions to replace standard convolutions. This mechanism enables the network to learn a dynamic feature selection, effectively distinguishing valid pixels from the mask. This change proved critical, resulting in a 0.2 drop in overall loss and allowing the model to focus learning on filling the holes rather than blurring the masked areas.
+
+
+\subsection{Version 5} In this version, we adjusted the architecture to ensure symmetry between the downsampling and upsampling layers. This alignment allowed skip connections to pass features directly without resizing artifacts, enabling better reconstruction of local features. The output became substantially less blurry, although the model still struggled with complex semantic understanding due to the limited depth of the transformer layers.
+
+\begin{figure}[h]
+ \centering
+ \includegraphics[width=\linewidth]{symm.png}
+ \caption{Architecture with reordered upsampling and downsampling layers}
+ \label{fig:cnn1d}
+\end{figure}
+
+\subsection{Final version} The final model incorporated an adversarial network (Discriminator) to punish the generation of unrealistic "slop" images, forcing the generator to produce sharper results. We also implemented a training strategy where patch sizes started small and increased as epochs progressed, helping the model adapt to the task complexity. Additionally, we found that patch shape was critical; ellipsoidal patches hindered convergence, so we adjusted the masking strategy.
+
+\begin{figure}[h]
+ \centering
+ \includegraphics[width=\linewidth]{final.png}
+ \caption{Final architecture with linear transformers in all layers}
+ \label{fig:cnn1d}
+\end{figure}
+
+
+
+
+\section{Experimental results}
+Below is a table summing up all the different versions performance.
+\begin{tabular}{|c|ccc|}
+     \hline 
+    & \bf 10-20 &\bf 20-30 &\bf 30-40\\
+     \hline 
+     v1 : SSIM  & x & &\\
+     v1 : PSNR  & y & &\\
+     \hline 
+     v2 : SSIM  & & &\\
+     v2 : PSNR  & & &\\
+     \hline 
+     v3 : SSIM  & & &\\
+     v3 : PSNR  & & &\\
+     \hline 
+     v4 : SSIM  & & &\\
+     v4 : PSNR  & & &\\
+     \hline 
+     v5 : SSIM  & & &\\
+     v5 : PSNR  & & &\\
+     \hline 
+     final : SSIM  & & &\\
+     final : PSNR  & & &\\
+     \hline
+     tf : SSIM  &0.953 & 0.907 & 0.846\\
+     tf : PSNR  & 29.06 & 25.69 & 23.36\\
+     \hline
+\end{tabular}
+\section{Conclusions and future work}
+
+%\begin{figure}[h]
+%  \centering
+%  \includegraphics[width=0.4\linewidth]{cnn1d_traces_diagram_tb_compact.png}
+%  \caption{Architecture of the 1D CNN for trace classification.}
+%  \label{fig:cnn1d}
+%\end{figure}
+
+\section{Bibliography}
+\printbibliography
+
+\end{document}

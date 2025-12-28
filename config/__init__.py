@@ -6,13 +6,25 @@ from pydantic import BaseModel
 class Config(BaseModel):
     backbone: str = "facebook/dinov2-small"
     device: str | None = None
-    resolution: tuple[int, int] = (128, 128)
+    resolution: tuple[int, int] = (512, 512)
     dtype: str = "bfloat16"
     kernel_size: int = 3
-    bottleneck: int = 128
+    bottleneck: int = 256
     conv_blocks: int = 3
     in_channels: int = 4
     heads: int = 8
+<<<<<<< HEAD
+    dim_feed_forward: int = 256
+    transformer_depth_min: int = 0
+    num_layers: int = 6
+    dropout: float = 0.0
+    activation: str = "gelu"
+    lr: float = 1e-4
+    num_epochs: int = 100
+    batch_size: int = 2
+    num_ellipses_train: tuple[int, int] = (3, 10)
+    num_lines_train: tuple[int,int] = (6, 15) 
+=======
     dim_feed_forward: int = 512
     num_layers: int = 5
     dropout: float = 0.1
@@ -21,16 +33,19 @@ class Config(BaseModel):
     num_epochs: int = 100
     batch_size: int = 64
     num_ellipses_train: tuple[int, int] = (1, 5)
+>>>>>>> main
     random_seed: int = 0
+    size_range_start: tuple[float, float] = (0.005, 0.01)
+    size_range_end: tuple[float, float] = (0.05, 0.1)
+    mask_warmup_percentage: float = 0.1
 
     def get_activation(self) -> torch.nn.Module:
         activations = {
-            'relu': torch.nn.ReLU(),
-            'gelu': torch.nn.GELU(),
-            'tanh': torch.nn.Tanh()
+            "relu": torch.nn.ReLU(),
+            "gelu": torch.nn.GELU(),
+            "tanh": torch.nn.Tanh(),
         }
         return activations[self.activation]
-
 
     def get_dtype_pt(self) -> torch.dtype:
         if self.dtype == "float32":
