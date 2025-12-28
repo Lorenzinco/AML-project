@@ -6,5 +6,5 @@ Photosciop was a project we took on for the advanced machine learning course in 
 It is an image inpainting U-net which end result took a lot of inspiration from T-former.
 
 Final version's output looks blurry if trying to cut out complex portion of the image, very nice if the background is static/simple.
-
-![An example output](https://github.com/Lorenzinco/AML-project/tree/main/gormita.jpg)
+### Example:
+![An example output](https://raw.githubusercontent.com/Lorenzinco/AML-project/refs/heads/main/gormita.jpg)
