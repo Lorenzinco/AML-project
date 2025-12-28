@@ -41,12 +41,12 @@ def save_images(
 
     if n_images > 1:
         for i, image in enumerate(images):
-            axes[i].imshow(image.permute(1, 2, 0).to(dtype=torch.float32))
+            axes[i].imshow(image.permute(1, 2, 0).to(dtype=torch.float32))  # type: ignore
             axes[i].set_title(labels[i])
             axes[i].axis("off")
     else:
         image = images[0]
-        axes.imshow(image.permute(1, 2, 0).to(dtype=torch.float32))
+        axes.imshow(image.permute(1, 2, 0).to(dtype=torch.float32))  # type: ignore
         axes.set_title(labels[0])
         axes.axis("off")
 
